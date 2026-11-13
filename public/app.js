@@ -8,7 +8,7 @@ const params = new URLSearchParams(location.search);
 const DEMO = location.hostname.endsWith('github.io') || params.has('demo') || document.documentElement.dataset.mode === 'demo' || location.protocol === 'file:';
 let demo = null;
 
-let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, mailOn = false, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
+let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, mailOn = false, pushKey = null, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
 
 const admin = () => actor?.role === 'coordinator';
 const date = () => $('#date').value;
@@ -46,7 +46,7 @@ async function api(path, init) {
 }
 function accept(data) {
   if (data.revision < revision) return;
-  state = data.state; actor = data.actor; revision = data.revision; mailOn = Boolean(data.mail);
+  state = data.state; actor = data.actor; revision = data.revision; mailOn = Boolean(data.mail); pushKey = data.push || null;
   if (!admin() && tab === 'board') tab = 'self';
   const sync = $('#sync'); sync.classList.remove('offline');
   sync.textContent = DEMO ? 'Tallennettu tähän selaimeen' : 'Yhteinen tilanne · päivitetty ' + new Date(data.serverTime).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
@@ -55,6 +55,64 @@ function accept(data) {
 }
 
 /* ---------- Ilmoitukset ---------- */
+const swSupported = 'serviceWorker' in navigator && isSecureContext;
+const pushSupported = swSupported && 'PushManager' in window && 'Notification' in window;
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const deviceLabel = () => { const ua = navigator.userAgent; return /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || isIOS ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'Selain'; };
+let swReg = null;
+async function registration() {
+  if (!swSupported) return null;
+  swReg ||= await navigator.serviceWorker.register('./sw.js');
+  return navigator.serviceWorker.ready;
+}
+async function showLocal(title, body, tag, url = './') {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try { const reg = await registration(); if (reg) await reg.showNotification(title, { body, icon: './img/icon-192.png', badge: './img/favicon.png', tag, data: { url } }); else new Notification(title, { body, tag }); } catch { /* ei tuettu */ }
+}
+const keyBytes = k => Uint8Array.from(atob(k.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((k.length + 3) % 4)), c => c.charCodeAt(0));
+async function renderPushBox() {
+  const box = $('#push-box'); if (!box) return;
+  const head = '<strong>Puhelinilmoitukset</strong>';
+  if (!pushSupported) {
+    box.innerHTML = head + (isIOS && !standalone
+      ? '<p class="form-help">iPhonessa ilmoitukset toimivat, kun Sijaispöytä on lisätty Koti-valikkoon:</p><ol class="steps"><li>Napauta Safarissa <b>Jaa</b>-painiketta.</li><li>Valitse <b>Lisää Koti-valikkoon</b>.</li><li>Avaa Sijaispöytä kotivalikon kuvakkeesta ja ota ilmoitukset käyttöön tästä.</li></ol><p class="form-help">Vaatii iOS 16.4:n tai uudemman. Sovelluskauppaa ei tarvita.</p>'
+      : '<p class="form-help">Tämä selain ei tue ilmoituksia. Kokeile Chromea, Edgeä, Firefoxia tai Safaria.</p>');
+    return;
+  }
+  if (Notification.permission === 'denied') { box.innerHTML = head + '<p class="form-help">Ilmoitukset on estetty tämän selaimen asetuksista. Salli ne sivuston asetuksista ja avaa tämä uudelleen.</p>'; return; }
+  if (DEMO) {
+    box.innerHTML = head + (Notification.permission === 'granted'
+      ? '<p class="ok-line">✓ Ilmoitukset sallittu tällä laitteella</p><div class="row-buttons"><button id="push-try" class="ghost sm">Lähetä kokeiluilmoitus</button></div>'
+      : '<p class="form-help">Saat tiedon puhelimeen tai koneelle, kun sinua koskeva tilanne muuttuu.</p><div class="row-buttons"><button id="push-enable" class="primary sm">Salli ilmoitukset tällä laitteella</button></div>')
+      + '<p class="form-help">Testiversiossa ilmoitus tulee, kun sivu on auki tai taustalla. Oikeassa versiossa se tulee, vaikka sovellus olisi kokonaan kiinni.</p>';
+    $('#push-enable')?.addEventListener('click', async () => { await Notification.requestPermission(); await registration().catch(() => {}); renderPushBox(); });
+    $('#push-try')?.addEventListener('click', () => { message('Kokeiluilmoitus tulee 5 sekunnin päästä. Voit siirtää sivun taustalle.'); setTimeout(() => showLocal('Sijaispöytä', 'Kokeiluilmoitus: ilmoitukset toimivat tällä laitteella.', 'demo-test'), 5000); });
+    return;
+  }
+  if (!pushKey) { box.innerHTML = head + '<p class="form-help">Puhelinilmoituksia ei ole vielä kytketty palvelimelle (VAPID-avaimet). Ohje on README:ssä.</p>'; return; }
+  const reg = await registration().catch(() => null);
+  const current = await reg?.pushManager.getSubscription().catch(() => null);
+  const mine = state.pushSubs || [];
+  const here = current && mine.some(x => x.endpoint === current.endpoint);
+  const others = mine.filter(x => x.endpoint !== current?.endpoint).length;
+  box.innerHTML = head + (here
+    ? '<p class="ok-line">✓ Käytössä tällä laitteella</p><div class="row-buttons"><button id="push-test" class="ghost sm">Lähetä kokeiluilmoitus</button><button id="push-off" class="link">Poista käytöstä</button></div>'
+    : '<p class="form-help">Saat ilmoituksen puhelimeen tai koneelle, vaikka Sijaispöytä olisi kiinni.</p><div class="row-buttons"><button id="push-on" class="primary sm">Ota käyttöön tällä laitteella</button></div>')
+    + (others ? `<p class="form-help">Käytössä myös ${others} muulla laitteella.</p>` : '');
+  $('#push-on')?.addEventListener('click', async e => {
+    e.target.disabled = true;
+    try {
+      if ((await Notification.requestPermission()) !== 'granted') throw new Error('Ilmoituksia ei sallittu.');
+      const r = await registration();
+      const sub = (await r.pushManager.getSubscription()) || await r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(pushKey) });
+      await mutate('pushSubscribe', { subscription: sub.toJSON(), label: deviceLabel() }, 'Puhelinilmoitukset käytössä tällä laitteella.');
+    } catch (err) { message(err.message, true); }
+    renderPushBox();
+  });
+  $('#push-test')?.addEventListener('click', async () => { try { await mutate('pushTest', {}, 'Kokeiluilmoitus lähetetty. Sen pitäisi näkyä hetken päästä.'); } catch (err) { message(err.message, true); } });
+  $('#push-off')?.addEventListener('click', async () => { try { const ep = current.endpoint; await current.unsubscribe().catch(() => {}); await mutate('pushUnsubscribe', { endpoint: ep }, 'Puhelinilmoitukset poistettu tältä laitteelta.'); } catch (err) { message(err.message, true); } renderPushBox(); });
+}
 const myKey = () => admin() ? 'coordinator' : actor?.personId;
 const myNotes = () => (state.notifications || []).filter(n => n.to === myKey()).sort((a, b) => b.at.localeCompare(a.at));
 function announce() {
@@ -63,9 +121,8 @@ function announce() {
   if (!fresh.length) return;
   $('#bell').classList.remove('ring'); void $('#bell').offsetWidth; $('#bell').classList.add('ring');
   message(fresh.length === 1 ? 'Uusi ilmoitus: ' + fresh[0].text : `${fresh.length} uutta ilmoitusta.`);
-  if ('Notification' in window && Notification.permission === 'granted') {
-    try { for (const n of fresh.slice(0, 3)) new Notification('Sijaispöytä', { body: n.text, icon: './img/favicon.png', tag: n.id }); } catch { /* esim. mobiiliselain */ }
-  }
+  // Avoimella sivulla näytetään paikallinen ilmoitus. Suljetulle sovellukselle ilmoitus tulee palvelimelta (Web Push).
+  if (DEMO || !pushKey || !(state.pushSubs || []).length) for (const n of fresh.slice(0, 3)) showLocal('Sijaispöytä', n.text, n.id, n.date ? `./?date=${n.date}&need=${encodeURIComponent(n.needId || '')}` : './');
 }
 async function digestModal() {
   try {
@@ -77,14 +134,14 @@ async function digestModal() {
 function notesModal() {
   const list = myNotes();
   const ago = at => { const m = Math.round((Date.now() - new Date(at)) / 60000); return m < 1 ? 'juuri nyt' : m < 60 ? `${m} min sitten` : new Date(at).toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); };
-  const canAsk = 'Notification' in window && Notification.permission === 'default';
   modal('Ilmoitukset', `<div class="notes">${list.map(n => `<div class="note-item t-${esc(n.type)} ${n.read ? '' : 'unread'}"><span class="dot"></span><div><p>${esc(n.text)}</p><small>${esc(ago(n.at))}</small>${n.date ? `<button class="link" data-open-note="${esc(n.id)}">Näytä päivä</button>` : ''}</div></div>`).join('') || '<p class="muted">Ei ilmoituksia. Saat tiedon täällä, kun joku ilmoittautuu, sijaisuus vahvistetaan tai perutaan.</p>'}</div>
+    <div id="push-box" class="mail-prefs"></div>
     ${!DEMO && actor.email ? (() => { const pr = state.emailPrefs?.[actor.id] || {}; return `<form id="mail-prefs" class="mail-prefs"><strong>Sähköposti</strong><span class="muted">${esc(actor.email)}</span>
       <label class="check"><input type="checkbox" name="notify" ${pr.notify ? 'checked' : ''}> Lähetä ilmoitukset myös sähköpostiin</label>
       <label class="check"><input type="checkbox" name="digest" ${pr.digest ? 'checked' : ''}> Aamukooste arkiaamuisin klo 7</label>
       ${mailOn ? '' : '<p class="form-help">Koulun sähköpostilähetys ei ole vielä kytketty. Valinta tallentuu ja alkaa toimia, kun se otetaan käyttöön.</p>'}</form>`; })() : ''}
-    <div class="note-tools"><button id="open-digest" class="ghost sm">Aamukooste</button>${canAsk ? '<button id="allow-push" class="ghost sm">Salli ilmoitukset tällä laitteella</button>' : '<span></span>'}${list.some(n => !n.read) ? '<button id="mark-read" class="primary sm">Merkitse luetuiksi</button>' : ''}</div>`);
-  $('#allow-push')?.addEventListener('click', async () => { const r = await Notification.requestPermission(); $('#allow-push').textContent = r === 'granted' ? 'Selainilmoitukset sallittu ✓' : 'Ilmoituksia ei sallittu'; $('#allow-push').disabled = true; });
+    <div class="note-tools"><button id="open-digest" class="ghost sm">Aamukooste</button>${list.some(n => !n.read) ? '<button id="mark-read" class="primary sm">Merkitse luetuiksi</button>' : ''}</div>`);
+  renderPushBox();
   $('#open-digest').addEventListener('click', digestModal);
   $('#mail-prefs')?.addEventListener('change', async e => { const f = new FormData(e.currentTarget); try { await mutate('emailPrefs', { notify: f.has('notify'), digest: f.has('digest') }, 'Sähköpostiasetus tallennettu.'); } catch (err) { message(err.message, true); } });
   $('#mark-read')?.addEventListener('click', async () => { try { await mutate('markRead', { ids: 'all' }); $('#modal').close(); } catch (e) { message(e.message, true); } });
@@ -264,6 +321,7 @@ function guide() {
     <li>Vaihda takaisin <b>Sijaisvastaavaksi</b> ja vahvista Elias. Kokeile myös <b>Peru vahvistus</b>: tehtävä avautuu uudelleen.</li>
     <li>Merkitse uusi poissaolo ja lisää jollekulle saatavuus <b>Henkilöt ja saatavuus</b> -välilehdellä.</li>
     <li><b>Ilmoitukset:</b> avaa sivu kahteen välilehteen, toisessa sijaisvastaava ja toisessa Elias. Kun Elias ilmoittautuu, sijaisvastaavan kello soi. Vahvistuksesta tieto menee Eliakselle ja poissa olevalle opettajalle (Anna Aalto).</li>
+    <li><b>Puhelimeen:</b> avaa tämä sivu puhelimella, paina kelloa ja valitse <b>Salli ilmoitukset</b>. iPhonessa lisää sivu ensin Koti-valikkoon (Jaa → Lisää Koti-valikkoon).</li>
     <li>Kokeile <b>Aamukooste</b>: tällaisen yhteenvedon sijaisvastaava saa arkiaamuisin klo 7 sähköpostiin. Sijainen saa muistutuksen omasta päivästään.</li>
     <li>Kokeile <b>Kopioi viesti</b> (WhatsApp-sijaispyyntö) ja <b>Tilanneraportti</b>.</li>
   </ol><p class="form-help" style="margin-top:14px">Kaikki tiedot ovat kuvitteellisia ja pysyvät vain tässä selaimessa. “Palauta esimerkkitilanne” sivun alareunassa aloittaa alusta.</p>

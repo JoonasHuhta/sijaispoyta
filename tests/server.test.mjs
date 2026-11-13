@@ -155,7 +155,7 @@ test('Aamukooste lähtee kerran päivässä ja tulos ei sisällä henkilötietoj
   s.needs[0].applicants = ['elias']; s.needs[0].assignedId = 'elias';
   const store = new BoardStore(database(s)), f = fakeFetch(), date = s.needs[0].date;
   const dry = await runDigest(store, mailEnv, { origin: 'https://school.test', date, dry: true, fetcher: f });
-  assert.deepEqual(dry, { dry: true, date, wouldSend: 2 }); assert.equal(f.sent.length, 0);
+  assert.deepEqual(dry, { dry: true, date, wouldSend: 2, wouldPush: 0 }); assert.equal(f.sent.length, 0);
   const first = await runDigest(store, mailEnv, { origin: 'https://school.test', date, fetcher: f });
   assert.equal(first.sent, 2); assert.doesNotMatch(JSON.stringify(first), /@|Elias|Anna/);
   assert.equal((await runDigest(store, mailEnv, { origin: 'https://school.test', date, fetcher: f })).alreadySent, true);
@@ -168,4 +168,49 @@ test('Ajastusrajapinta vaatii oikean tokenin', async () => {
   assert.equal((await call('y'.repeat(32))).status, 401);
   const ok = await call(mailEnv.CRON_TOKEN); assert.equal(ok.status, 200);
   assert.equal((await handleApi(new Request('https://school.test/api/cron/digest', { method: 'POST', headers: { authorization: 'Bearer ' + mailEnv.CRON_TOKEN } }), { DB: db })).status, 503);
+});
+
+import { generateVapidKeys, b64u } from '../server/webpush.js';
+async function browserSub(host = 'https://fcm.googleapis.com/fcm/send/') {
+  const k = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  return { endpoint: host + crypto.randomUUID(), keys: { p256dh: b64u.encode(await crypto.subtle.exportKey('raw', k.publicKey)), auth: b64u.encode(crypto.getRandomValues(new Uint8Array(16))) } };
+}
+test('Puhelinilmoitukset: tilaus, kokeilu, oikeat vastaanottajat ja vanhentuneen tilauksen poisto', async () => {
+  const vapid = await generateVapidKeys(), env = { VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey };
+  const s = initial(), db = database(s), store = new BoardStore(db);
+  await assert.rejects(store.update(sub, admin.email, command('pushSubscribe', { subscription: { endpoint: 'https://evil.example/x', keys: { p256dh: 'a'.repeat(87), auth: 'b'.repeat(22) } } })), /ei kelpaa/);
+  const eliasPhone = await browserSub(), adminPhone = await browserSub('https://web.push.apple.com/');
+  await store.update(sub, admin.email, command('pushSubscribe', { subscription: eliasPhone, label: 'Android' }));
+  await store.update(admin, admin.email, command('pushSubscribe', { subscription: adminPhone, label: 'iPhone' }));
+  const calls = []; const f = async (url, init) => { calls.push({ url, auth: init.headers.Authorization, enc: init.headers['Content-Encoding'] }); return new Response(null, { status: url === adminPhone.endpoint && calls.length > 2 ? 410 : 201 }); };
+  // Kokeiluilmoitus menee vain omalle laitteelle.
+  await store.update(sub, admin.email, command('pushTest'));
+  let r = await deliverPending(store, env, 'https://school.test', f);
+  assert.equal(r.pushed, 1); assert.equal(calls[0].url, eliasPhone.endpoint); assert.equal(calls[0].enc, 'aes128gcm'); assert.match(calls[0].auth, /^vapid t=.+, k=/);
+  // Ilmoittautuminen → sijaisvastaavan puhelin; vahvistus → Eliaksen puhelin.
+  await store.update(sub, admin.email, command('apply', { id: 'n1' }));
+  r = await deliverPending(store, env, 'https://school.test', f); assert.equal(calls.at(-1).url, adminPhone.endpoint); assert.equal(r.pushed, 1);
+  await store.update(admin, admin.email, command('confirm', { id: 'n1', personId: 'elias' }));
+  r = await deliverPending(store, env, 'https://school.test', f); assert.equal(calls.at(-1).url, eliasPhone.endpoint);
+  // Palvelu vastaa 410 → tilaus poistetaan.
+  const gone = async url => new Response(null, { status: url === adminPhone.endpoint ? 410 : 201 });
+  await store.update(sub, admin.email, command('apply', { id: 'n2' })).catch(() => {});
+  await store.update(sub, admin.email, command('availability', { date: s.needs[0].date, start: '15:00', end: '16:00' }));
+  await deliverPending(store, env, 'https://school.test', gone);
+  const after = (await store.read()).state;
+  assert.equal(after.pushSubs.some(x => x.endpoint === adminPhone.endpoint), false);
+  assert.equal(after.pushSubs.some(x => x.endpoint === eliasPhone.endpoint), true);
+  // Rajapinta ei paljasta salausavaimia eikä muiden laitteita.
+  const res = await (await handleApi(request('/api/state', sub), { DB: db, ...env })).json();
+  assert.equal(res.push, vapid.publicKey);
+  assert.ok(res.state.pushSubs.every(x => !x.p256dh && !x.auth));
+  assert.ok(res.state.pushSubs.every(x => x.endpoint !== adminPhone.endpoint));
+});
+test('Aamukooste lähtee myös puhelimeen', async () => {
+  const vapid = await generateVapidKeys(), env = { VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey };
+  const s = initial(), store = new BoardStore(database(s)), date = s.needs[0].date;
+  await store.update(admin, admin.email, command('pushSubscribe', { subscription: await browserSub() }));
+  const urls = []; const f = async url => { urls.push(url); return new Response(null, { status: 201 }); };
+  const r = await runDigest(store, env, { origin: 'https://school.test', date, fetcher: f });
+  assert.deepEqual({ sent: r.sent, pushed: r.pushed }, { sent: 0, pushed: 1 });
 });

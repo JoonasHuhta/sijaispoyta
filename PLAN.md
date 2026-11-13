@@ -52,9 +52,10 @@ Toteutettu (0.5): sähköposti-ilmoitukset henkilökohtaisella kytkimellä ja aa
 
 Seuraavaksi:
 
-1. **Push-ilmoitus puhelimeen** (Web Push, maksuton): palvelutyöntekijä (service worker), VAPID-avaimet, tilausten tallennus ja lähetys palvelimelta. Android: toimii Chromessa suoraan. iPhone (iOS 16.4+): sivu lisätään ensin kotivalikkoon, minkä jälkeen ilmoitukset voi sallia. Sovelluskauppaa ei tarvita. Sovelluksessa on jo manifesti ja kuvakkeet kotivalikkoon lisäämistä varten.
-2. **WhatsApp**: WhatsApp Business Platform, maksullinen viestikohtaisesti. Tarvitaan Meta-yritystili, vahvistettu numero, hyväksytyt viestipohjat ja puhelinnumerot. Viestiin vain aika, luokka ja linkki; ei poissaolon syytä. Siihen asti sijaispyynnön voi kopioida WhatsAppiin käsin.
-3. **Varajärjestely aamukoosteelle**: jos Sitesin kirjautuminen estää ajastetut pyynnöt, ajastus siirretään Cloudflaren cron-triggeriin samassa workerissa.
+Toteutettu (0.6): push-ilmoitukset puhelimeen (Web Push, maksuton, ei sovelluskauppaa). Laitekohtainen käyttöönotto kellosta, kokeiluilmoitus, iPhonen Koti-valikko-ohje, aamukooste myös pushina.
+
+1. **WhatsApp**: WhatsApp Business Platform, maksullinen viestikohtaisesti. Tarvitaan Meta-yritystili, vahvistettu numero, hyväksytyt viestipohjat ja puhelinnumerot. Viestiin vain aika, luokka ja linkki; ei poissaolon syytä. Siihen asti sijaispyynnön voi kopioida WhatsAppiin käsin.
+2. **Varajärjestely aamukoosteelle**: jos Sitesin kirjautuminen estää ajastetut pyynnöt, ajastus siirretään Cloudflaren cron-triggeriin samassa workerissa.
 
 Henkilötiedot ja ilmoitukset pysyvät sovelluksen tietokannassa. Git ja GitHub versioivat vain ohjelman.
 

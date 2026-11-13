@@ -58,6 +58,17 @@ Testiversiossa ilmoitukset kulkevat saman selaimen välilehtien välillä: avaa 
 
 Jokainen valitsee kellon kautta itse, saako hän ilmoitukset ja aamukoosteen sähköpostiin. Osoitteena on kirjautumistunnukseen liitetty sähköposti. Lähetys tapahtuu palvelimella heti tallennuksen jälkeen (`server/mail.js`). Jokainen ilmoitus merkitään käsitellyksi ennen lähetystä, joten sama viesti ei lähde kahdesti.
 
+### Puhelinilmoitukset (Web Push)
+
+Ilmaisia, eikä sovelluskauppaa tarvita. Jokainen ottaa ne käyttöön omalla laitteellaan kellon kautta (**Ota käyttöön tällä laitteella**). Saman henkilön laitteita voi olla useita. **Lähetä kokeiluilmoitus** varmistaa, että ilmoitus tulee perille.
+
+- **Android, Windows, Mac:** toimii suoraan Chromessa, Edgessä ja Firefoxissa sekä Macin Safarissa.
+- **iPhone ja iPad (iOS 16.4+):** avaa sivu Safarissa ja valitse Jaa → **Lisää Koti-valikkoon**. Avaa Sijaispöytä kotivalikon kuvakkeesta ja ota ilmoitukset käyttöön kellosta. Sovellus neuvoo tämän itse.
+
+Ilmoitus tulee, vaikka Sijaispöytä olisi kiinni. Napautus avaa suoraan kyseisen päivän ja sijaisuuden. Myös aamukooste tulee lyhyenä puhelinilmoituksena niille, joilla push on käytössä. Toteutus on omaa koodia ilman ulkopuolisia palveluja (`server/webpush.js`, `public/sw.js`). Viestit salataan selaimen avaimella (RFC 8291), ja palvelin lähettää vain tunnettuihin selainvalmistajien push-palveluihin. Vanhentuneet laitetilaukset poistuvat automaattisesti.
+
+Testiversiossa ilmoitus näkyy, kun sivu on auki tai taustalla. Oikeassa versiossa se tulee palvelimelta, vaikka sovellus olisi kokonaan kiinni.
+
 ### Aamukooste ("agentti")
 
 Arkiaamuisin klo 7 GitHub Actions (`.github/workflows/digest.yml`) herättää sovelluksen. Sovellus kokoaa tilanteen omasta tietokannastaan (`server/digest.js`):
@@ -76,8 +87,9 @@ Hiljaisena aamuna viestiä ei lähetetä. Kooste lähtee kerran päivässä. Git
    - `MAIL_FROM`: esim. `Sijaispöytä <sijaispoyta@koulu.fi>`
    - `SITE_URL`: sovelluksen osoite viestien linkkejä varten
    - `CRON_TOKEN`: pitkä satunnainen merkkijono (vähintään 24 merkkiä)
-3. Lisää GitHubiin (Settings → Secrets and variables → Actions) `SIJAISPOYTA_URL` ja `SIJAISPOYTA_CRON_TOKEN` (sama kuin `CRON_TOKEN`).
-4. Testaa: Actions → Aamukooste → Run workflow (esikatselu ei lähetä mitään).
+3. Puhelinilmoituksia varten: aja `npm run push:keys` ja lisää tulostuvat `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` ja `VAPID_SUBJECT` samoihin Sites-salaisuuksiin. Puhelinilmoitukset toimivat myös ilman sähköpostia.
+4. Lisää GitHubiin (Settings → Secrets and variables → Actions) `SIJAISPOYTA_URL` ja `SIJAISPOYTA_CRON_TOKEN` (sama kuin `CRON_TOKEN`).
+5. Testaa: Actions → Aamukooste → Run workflow (esikatselu ei lähetä mitään).
 
 Ajastettu pyyntö tulee ilman ChatGPT-kirjautumista ja tunnistetaan `CRON_TOKEN`illa. Jos Sites ohjaa kaikki kirjautumattomat pyynnöt kirjautumiseen, ajastus ei tavoita sovellusta. Silloin aamukooste ajetaan Cloudflaren omalla ajastuksella tai muulla palvelimella (ks. PLAN.md).
 

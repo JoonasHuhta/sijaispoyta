@@ -1,6 +1,7 @@
 import { buildDigest } from './digest.js';
 export { buildDigest };
-import { mailConfigured, deliverPending, runDigest } from './mail.js';
+import { mailConfigured, pushConfigured, deliverPending, runDigest } from './mail.js';
+import { allowedEndpoint } from './webpush.js';
 import { seed, uid, addPerson, addAvailability, removeAvailability, addNeed, apply, confirmAssignment, cancelAssignment, eligibility, today, report } from '../public/domain.js';
 
 export class HttpError extends Error {
@@ -124,6 +125,26 @@ export function execute(state, actor, action, data = {}) {
       state.emailPrefs[actor.id] = { notify: data.notify === true, digest: data.digest === true };
       return;
     }
+    case 'pushSubscribe': {
+      const sub = data.subscription || {};
+      const p256dh = sub.keys?.p256dh, auth = sub.keys?.auth;
+      if (!allowedEndpoint(sub.endpoint) || sub.endpoint.length > 1000 || !/^[A-Za-z0-9_-]{80,100}$/.test(p256dh || '') || !/^[A-Za-z0-9_-]{16,32}$/.test(auth || '')) fail(400, 'Laitteen ilmoitustilaus ei kelpaa.');
+      state.pushSubs = (state.pushSubs || []).filter(x => x.endpoint !== sub.endpoint);
+      const mine = state.pushSubs.filter(x => x.memberId === actor.id);
+      if (mine.length >= 5) state.pushSubs = state.pushSubs.filter(x => x !== mine[0]);
+      state.pushSubs.push({ id: uid(), memberId: actor.id, endpoint: sub.endpoint, p256dh, auth, label: String(data.label || 'Laite').slice(0, 60), at: new Date().toISOString() });
+      return;
+    }
+    case 'pushUnsubscribe': {
+      state.pushSubs = (state.pushSubs || []).filter(x => !(x.memberId === actor.id && (x.endpoint === data.endpoint || x.id === data.id)));
+      return;
+    }
+    case 'pushTest': {
+      if (!(state.pushSubs || []).some(x => x.memberId === actor.id)) fail(400, 'Ota ensin puhelinilmoitukset käyttöön tällä laitteella.');
+      state.notifications.push({ id: uid(), at: new Date().toISOString(), read: false, to: recipientKey(actor), onlyMember: actor.id, type: 'test', needId: null, date: null, text: 'Kokeiluilmoitus: puhelinilmoitukset toimivat tällä laitteella.' });
+      state.notifications = state.notifications.slice(-300);
+      return;
+    }
     case 'markRead': {
       const key = recipientKey(actor);
       const ids = data.ids === 'all' ? null : data.ids;
@@ -239,7 +260,9 @@ export async function handleApi(request, env) {
     const visible = project(result.state, result.actor);
     delete visible.requests;
     delete visible.digestSent;
-    return json({ revision: result.revision, state: visible, actor: result.actor, mail: mailConfigured(env), serverTime: new Date().toISOString() });
+    // Push-tilauksista näytetään vain omat, ilman salausavaimia.
+    visible.pushSubs = (result.state.pushSubs || []).filter(x => x.memberId === result.actor.id).map(({ id, endpoint, label, at }) => ({ id, endpoint, label, at }));
+    return json({ revision: result.revision, state: visible, actor: result.actor, mail: mailConfigured(env), push: pushConfigured(env) ? env.VAPID_PUBLIC_KEY : null, serverTime: new Date().toISOString() });
   } catch (error) {
     if (error instanceof HttpError) return json({ error: error.message }, error.status);
     // Domain validation errors are safe, user-facing messages. Database failures are not.

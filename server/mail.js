@@ -1,6 +1,7 @@
-// Sähköpostit: ilmoitukset ja aamukooste. Lähetys Resendin REST-rajapinnalla (toimii Workersissa fetchillä).
-// Ilman asetuksia (RESEND_API_KEY, MAIL_FROM) mitään ei lähetetä eikä mitään merkitä lähetetyksi.
+// Ilmoitusten lähetys: sähköposti (Resendin REST-rajapinta) ja push-ilmoitus puhelimeen (Web Push).
+// Ilman asetuksia (RESEND_API_KEY + MAIL_FROM tai VAPID-avaimet) mitään ei lähetetä eikä merkitä lähetetyksi.
 import { buildDigest } from './digest.js';
+import { pushConfigured, sendPush } from './webpush.js';
 import { today } from '../public/domain.js';
 
 const SUBJECTS = {
@@ -10,6 +11,13 @@ const SUBJECTS = {
 const FRESH_MS = 2 * 60 * 60 * 1000; // Vanhoja ilmoituksia ei lähetetä jälkikäteen, kun sähköposti kytketään päälle.
 
 export const mailConfigured = env => Boolean(env?.RESEND_API_KEY && env?.MAIL_FROM);
+export { pushConfigured };
+
+/** Push-tilaukset vastaanottaja-avaimelle. onlyMember rajaa yhteen tunnukseen (kokeiluilmoitus). */
+export function subscriptionsFor(state, to, onlyMember = null) {
+  const members = new Set((state.members || []).filter(m => (to === 'coordinator' ? m.role === 'coordinator' : m.personId === to)).map(m => m.id));
+  return (state.pushSubs || []).filter(sub => members.has(sub.memberId) && (!onlyMember || sub.memberId === onlyMember));
+}
 
 /** Sähköpostiosoitteet vastaanottaja-avaimelle ('coordinator' tai henkilön id) ja tyypille ('notify' | 'digest'). */
 export function emailsFor(state, to, kind) {
@@ -42,44 +50,69 @@ export async function sendEmail(env, { to, subject, text, html }, fetcher = fetc
   if (!response.ok) throw new Error(`Sähköpostin lähetys epäonnistui (${response.status}).`);
 }
 
-/** Merkitsee käsittelemättömät ilmoitukset käsitellyiksi ja palauttaa lähetettävät viestit. */
-export function claimNotificationEmails(state, origin, now = Date.now()) {
-  const out = [];
+/** Merkitsee käsittelemättömät ilmoitukset käsitellyiksi ja palauttaa lähetettävät viestit ({ emails, pushes }). */
+export function claimDeliveries(state, origin, env = {}, now = Date.now()) {
+  const emails = [], pushes = [];
+  const mail = mailConfigured(env), push = pushConfigured(env);
   for (const n of state.notifications || []) {
-    if (n.emailed !== undefined) continue;
-    n.emailed = true;
+    if (n.delivered !== undefined) continue;
+    n.delivered = true;
     if (now - Date.parse(n.at) > FRESH_MS) continue;
     const link = `${origin}/?${n.date ? `date=${n.date}` : ''}${n.needId ? `&need=${encodeURIComponent(n.needId)}` : ''}`;
-    for (const to of emailsFor(state, n.to, 'notify')) {
-      out.push({ to, subject: `Sijaispöytä: ${SUBJECTS[n.type] || 'ilmoitus'}`, ...renderEmail({ heading: SUBJECTS[n.type] || 'Ilmoitus', text: n.text, link, footer: 'Sait tämän, koska olet ottanut sähköposti-ilmoitukset käyttöön Sijaispöydässä. Voit poistaa ne sovelluksen kellon kautta.' }) });
+    if (mail && n.type !== 'test') for (const to of emailsFor(state, n.to, 'notify')) {
+      emails.push({ to, subject: `Sijaispöytä: ${SUBJECTS[n.type] || 'ilmoitus'}`, ...renderEmail({ heading: SUBJECTS[n.type] || 'Ilmoitus', text: n.text, link, footer: 'Sait tämän, koska olet ottanut sähköposti-ilmoitukset käyttöön Sijaispöydässä. Voit poistaa ne sovelluksen kellon kautta.' }) });
+    }
+    if (push) for (const sub of subscriptionsFor(state, n.to, n.onlyMember)) {
+      pushes.push({ sub, payload: { title: SUBJECTS[n.type] || 'Sijaispöytä', body: n.text, url: link, tag: n.id } });
     }
   }
-  return out;
+  return { emails, pushes };
+}
+
+/** Lähettää push-viestit ja poistaa vanhentuneet tilaukset (404/410). */
+async function sendPushes(store, env, pushes, fetcher) {
+  let sent = 0; const dead = new Set();
+  for (const { sub, payload } of pushes) {
+    try { const status = await sendPush(env, sub, payload, fetcher); if (status >= 200 && status < 300) sent++; else if (status === 404 || status === 410) dead.add(sub.endpoint); }
+    catch (e) { console.error('Push:', e.message); }
+  }
+  if (dead.size) await store.mutate(state => { state.pushSubs = (state.pushSubs || []).filter(x => !dead.has(x.endpoint)); });
+  return sent;
 }
 
 /** Lähettää uudet ilmoitukset. Merkintä tehdään ensin tietokantaan, jotta sama viesti ei lähde kahdesti. */
 export async function deliverPending(store, env, origin, fetcher = fetch) {
-  if (!mailConfigured(env)) return { sent: 0, configured: false };
-  const messages = await store.mutate(state => claimNotificationEmails(state, origin));
+  if (!mailConfigured(env) && !pushConfigured(env)) return { sent: 0, configured: false };
+  const { emails, pushes } = await store.mutate(state => claimDeliveries(state, origin, env));
   let sent = 0;
-  for (const m of messages || []) { try { await sendEmail(env, m, fetcher); sent++; } catch (e) { console.error(e.message); } }
-  return { sent, configured: true };
+  for (const m of emails) { try { await sendEmail(env, m, fetcher); sent++; } catch (e) { console.error(e.message); } }
+  const pushed = await sendPushes(store, env, pushes, fetcher);
+  return { sent, pushed, configured: true };
 }
 
 /** Aamukooste. Palauttaa vain lukumääriä, ei henkilötietoja (tulos voi päätyä julkiseen lokiin). */
 export async function runDigest(store, env, { origin, date = today(), dry = false, fetcher = fetch } = {}) {
-  if (!dry && !mailConfigured(env)) return { sent: 0, configured: false };
-  let messages = [];
+  if (!dry && !mailConfigured(env) && !pushConfigured(env)) return { sent: 0, configured: false };
+  let messages = [], pushes = [];
   const build = state => {
     const digest = buildDigest(state, date), out = [];
     const link = `${origin}/?date=${date}`, footer = 'Sijaispöydän aamukooste arkiaamuisin. Voit poistaa sen sovelluksen kellon kautta.';
-    if (digest.coordinator) for (const to of emailsFor(state, 'coordinator', 'digest')) out.push({ to, subject: digest.coordinator.subject, ...renderEmail({ heading: 'Aamukooste', text: digest.coordinator.text, link, footer }) });
-    for (const [id, d] of Object.entries(digest.people)) for (const to of emailsFor(state, id, 'digest')) out.push({ to, subject: d.subject, ...renderEmail({ heading: 'Päiväsi tilanne', text: d.text, link, footer }) });
+    const mail = mailConfigured(env) || dry, push = pushConfigured(env) || dry;
+    pushes = [];
+    const short = text => text.split('\n').filter(Boolean).slice(1, 4).join('\n');
+    if (digest.coordinator) {
+      if (mail) for (const to of emailsFor(state, 'coordinator', 'digest')) out.push({ to, subject: digest.coordinator.subject, ...renderEmail({ heading: 'Aamukooste', text: digest.coordinator.text, link, footer }) });
+      if (push) for (const sub of subscriptionsFor(state, 'coordinator')) pushes.push({ sub, payload: { title: digest.coordinator.subject, body: short(digest.coordinator.text), url: link, tag: 'digest-' + date } });
+    }
+    for (const [id, d] of Object.entries(digest.people)) {
+      if (mail) for (const to of emailsFor(state, id, 'digest')) out.push({ to, subject: d.subject, ...renderEmail({ heading: 'Päiväsi tilanne', text: d.text, link, footer }) });
+      if (push) for (const sub of subscriptionsFor(state, id)) pushes.push({ sub, payload: { title: 'Sijaispöytä: päiväsi tilanne', body: short(d.text), url: link, tag: 'digest-' + date } });
+    }
     return out;
   };
   if (dry) {
     messages = build((await store.read()).state);
-    return { dry: true, date, wouldSend: messages.length };
+    return { dry: true, date, wouldSend: messages.length, wouldPush: pushes.length };
   }
   let already = false;
   messages = await store.mutate(state => {
@@ -91,6 +124,7 @@ export async function runDigest(store, env, { origin, date = today(), dry = fals
   });
   if (already) return { sent: 0, alreadySent: true, date };
   let sent = 0;
-  for (const m of messages) { try { await sendEmail(env, m, fetcher); sent++; } catch (e) { console.error(e.message); } }
-  return { sent, date };
+  if (mailConfigured(env)) for (const m of messages) { try { await sendEmail(env, m, fetcher); sent++; } catch (e) { console.error(e.message); } }
+  const pushed = await sendPushes(store, env, pushes, fetcher);
+  return { sent, pushed, date };
 }
