@@ -38,6 +38,22 @@ Testiversio toimii pelkässä selaimessa ilman kirjautumista ja tietokantaa. Se 
 
 Testiversio tunnistetaan osoitteesta (`*.github.io`), parametrista `?demo` tai `data-mode="demo"`-merkinnästä. Sites-julkaisu toimii kuten ennenkin kirjautumisella ja yhteisellä tietokannalla.
 
+## Ilmoitukset
+
+Sovellus tekee ilmoituksen aina, kun sijaisuuden tila muuttuu. Ilmoitukset näkyvät yläkulman kellossa, ja selain voi näyttää ne myös omina ilmoituksinaan (salli kellon kautta).
+
+| Tapahtuma | Kuka saa tiedon |
+|---|---|
+| Sijainen ilmoittautuu tai perii ilmoittautumisen | Sijaisvastaava |
+| Sijainen vahvistetaan | Vahvistettu sijainen ja poissa oleva opettaja |
+| Vahvistus perutaan | Sijainen ja poissa oleva opettaja |
+| Opettaja merkitsee itse poissaolon | Sijaisvastaava |
+| Sijainen ilmoittaa saatavuuden | Sijaisvastaava |
+
+Säännöt ovat tiedostossa `server/board.js` (`notify`). Kukin näkee vain omat ilmoituksensa. Oma toiminto ei tee ilmoitusta tekijälle itselleen. Ilmoituslista on samalla lähtölaatikko: sähköposti, tekstiviesti tai muu kanava voidaan liittää myöhemmin lukemaan siitä lähettämättömät ilmoitukset (ks. PLAN.md).
+
+Testiversiossa ilmoitukset toimivat saman selaimen välilehtien välillä: avaa sivu kahteen välilehteen ja valitse kumpaankin eri rooli.
+
 ## Ulkoasu
 
 Värit tulevat koulun logosta (`public/img/logo.png`): sininen toiminnoille, punainen avoimille, keltainen vahvistusta odottaville ja vihreä vahvistetuille sijaisuuksille.

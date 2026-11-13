@@ -7,6 +7,11 @@ const KEY = 'sijaispoyta-demo-v2';
 const ROLE_KEY = KEY + '-role';
 
 const memory = {};
+// Rooli on välilehtikohtainen (sessionStorage), jotta kahdessa välilehdessä voi olla eri roolit.
+const session = {
+  get(key) { try { return sessionStorage.getItem(key); } catch { return memory[key] ?? null; } },
+  set(key, value) { try { sessionStorage.setItem(key, value); } catch { memory[key] = value; } },
+};
 const storage = {
   get(key) { try { return localStorage.getItem(key); } catch { return memory[key] ?? null; } },
   set(key, value) { try { localStorage.setItem(key, value); } catch { memory[key] = value; } },
@@ -17,7 +22,7 @@ export async function createDemo() {
   let board;
   try { board = await import('./server/board.js'); } catch { board = await import('../server/board.js'); }
   const { execute, project } = board;
-  let role = storage.get(ROLE_KEY) || 'coordinator';
+  let role = session.get(ROLE_KEY) || 'coordinator';
 
   const fresh = () => ({ revision: 0, state: { ...seed(), members: [], requests: [] } });
   function load() {
@@ -45,7 +50,7 @@ export async function createDemo() {
 
   return {
     get role() { return role; },
-    setRole(next) { role = next; storage.set(ROLE_KEY, next); },
+    setRole(next) { role = next; session.set(ROLE_KEY, next); },
     people() { return load().state.people; },
     wipe() { const data = fresh(); save(data); return data; },
     async request(path, options = {}) {

@@ -31,7 +31,38 @@ export function project(state, actor) {
       _reason: eligibility(state, n, ownId),
     })),
     events: state.events.filter(e => e.personId === ownId).map(({ actorId, ...event }) => event),
+    notifications: (state.notifications || []).filter(n => n.to === ownId),
   };
+}
+
+// Ilmoitukset: kuka saa tiedon mistäkin muutoksesta. Vastaanottaja on 'coordinator' (kaikki
+// sijaisvastaavat) tai henkilön id. Sama lista on ulkoisten kanavien (sähköposti ym.) lähtölaatikko.
+export const recipientKey = actor => actor.role === 'coordinator' ? 'coordinator' : actor.personId;
+const when = n => { const [, m, d] = n.date.split('-'); return `${Number(d)}.${Number(m)}. klo ${n.start}–${n.end}`; };
+const what = n => `${n.group} · ${n.subject}, ${when(n)}`;
+export function notify(state, action, { actor, personId, prior, created, data }) {
+  const name = id => state.people.find(p => p.id === id)?.name || 'Tuntematon';
+  const current = data.id ? state.needs.find(n => n.id === data.id) : null;
+  const items = [];
+  const add = (to, need, text, type = action) => { if (to && to !== recipientKey(actor)) items.push({ to, type, needId: need?.id || null, date: need?.date || data.date || null, text }); };
+  const byOther = actor.role !== 'coordinator';
+  switch (action) {
+    case 'apply': add('coordinator', current, `${name(personId)} ilmoittautui sijaiseksi: ${what(current)}.`); break;
+    case 'withdraw': if (prior?.applicants.includes(personId)) add('coordinator', current, `${name(personId)} perui ilmoittautumisensa: ${what(current)}.`); break;
+    case 'confirm':
+      add(current.assignedId, current, `Sinut on vahvistettu sijaiseksi: ${what(current)}. Yhteyshenkilö: ${current.owner || 'sijaisvastaava'}.`);
+      add(current.teacherId, current, `Sijaisesi on vahvistettu: ${name(current.assignedId)} hoitaa ${what(current)}.`);
+      break;
+    case 'cancel':
+      add(prior.assignedId, current, `Sijaisuutesi on peruttu: ${what(current)}. Ota tarvittaessa yhteys sijaisvastaavaan.`);
+      add(prior.teacherId, current, `Sijaisuus avautui uudelleen: ${what(current)}. ${name(prior.assignedId)} ei enää hoida tehtävää.`);
+      break;
+    case 'addNeed': if (byOther) add('coordinator', created, `${name(created.teacherId)} merkitsi poissaolon: ${what(created)}. Sijainen tarvitaan.`); break;
+    case 'availability': if (byOther) add('coordinator', null, `${name(personId)} ilmoitti saatavuuden ${Number(data.date.slice(8))}.${Number(data.date.slice(5, 7))}. klo ${data.start}–${data.end}.`); break;
+  }
+  const at = new Date().toISOString();
+  for (const item of items) state.notifications.push({ id: uid(), at, read: false, ...item });
+  state.notifications = state.notifications.slice(-300);
 }
 
 export function execute(state, actor, action, data = {}) {
@@ -39,6 +70,9 @@ export function execute(state, actor, action, data = {}) {
   const admin = () => { if (!coordinator) fail(403, 'Tämä toiminto kuuluu sijaisvastaavalle.'); };
   const personId = coordinator ? data.personId : actor.personId;
   const need = () => state.needs.find(n => n.id === data.id) || fail(404, 'Sijaisuutta ei löydy.');
+  state.notifications ||= [];
+  const prior = data.id ? structuredClone(state.needs.find(n => n.id === data.id) || null) : null;
+  let created = null;
   switch (action) {
     case 'addPerson': admin(); addPerson(state, data); break;
     case 'availability': addAvailability(state, { ...data, personId }); break;
@@ -50,7 +84,7 @@ export function execute(state, actor, action, data = {}) {
     }
     case 'addNeed': {
       if (!coordinator && state.people.find(p => p.id === actor.personId)?.kind !== 'staff') fail(403, 'Vain oma henkilöstö voi merkitä poissaolon.');
-      addNeed(state, { ...data, teacherId: coordinator ? data.teacherId : actor.personId }); break;
+      created = addNeed(state, { ...data, teacherId: coordinator ? data.teacherId : actor.personId }); break;
     }
     case 'apply': apply(state, data.id, personId); break;
     case 'withdraw': {
@@ -78,10 +112,18 @@ export function execute(state, actor, action, data = {}) {
       admin(); const members = state.members;
       // Do not leave accounts pointing at people removed by the reset.
       if (members.some(m => m.role !== 'coordinator')) fail(409, 'Poista ensin kokeilutunnusten liitokset ennen esimerkkien palautusta.');
-      Object.assign(state, seed(), { members }); break;
+      Object.assign(state, seed(), { members, notifications: [] }); break;
+    }
+    case 'markRead': {
+      const key = recipientKey(actor);
+      const ids = data.ids === 'all' ? null : data.ids;
+      if (ids !== null && (!Array.isArray(ids) || ids.length > 500 || ids.some(id => typeof id !== 'string'))) fail(400, 'Tarkista ilmoitukset.');
+      state.notifications.forEach(n => { if (n.to === key && (!ids || ids.includes(n.id))) n.read = true; });
+      return; // Lukukuittaus ei ole muutoshistorian tapahtuma.
     }
     default: fail(400, 'Tuntematon toiminto.');
   }
+  notify(state, action, { actor, personId, prior, created, data });
   state.events.push({ at: new Date().toISOString(), type: action, actorId: actor.userId, personId: personId || null, needId: data.id || null });
   state.events = state.events.slice(-500);
 }

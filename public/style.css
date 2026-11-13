@@ -239,3 +239,22 @@ form{display:grid;gap:14px}
   footer{flex-direction:column;align-items:flex-start}
   .tools>button{flex:1}
 }
+
+/* Ilmoitukset */
+.bell{position:relative;width:44px;height:44px;padding:0;border-radius:50%;background:#fff;border:1px solid var(--line);color:var(--navy)}
+.bell:hover{background:#f0f3f9}
+.bell.ring{animation:ring .6s ease 2}
+@keyframes ring{25%{transform:rotate(14deg)}75%{transform:rotate(-14deg)}}
+#bell-count{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--red);color:#fff;font-size:12px;font-weight:800;display:grid;place-items:center;border:2px solid #fff}
+.notes{display:grid;gap:8px;max-height:56vh;overflow:auto;margin:0 -4px;padding:0 4px}
+.note-item{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:#f7f9fc;border:1px solid var(--line)}
+.note-item.unread{background:#eef4fd;border-color:#bcd3f1}
+.note-item .dot{flex:none;width:10px;height:10px;border-radius:50%;margin-top:6px;background:#c8cfdd}
+.note-item.unread .dot{background:var(--blue)}
+.note-item.t-confirm .dot{background:var(--green)}.note-item.t-cancel .dot,.note-item.t-addNeed .dot{background:var(--red)}.note-item.t-apply .dot{background:var(--yellow)}
+.note-item p{margin:0 0 4px;font-size:14px;line-height:1.45}
+.note-item.unread p{font-weight:600}
+.note-item small{color:var(--muted);font-size:12px}
+.note-item .link{font-size:13px;padding:0;margin-left:8px}
+.note-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+@media(max-width:620px){.bell{width:40px;height:40px;flex:none}}

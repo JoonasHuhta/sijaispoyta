@@ -8,7 +8,7 @@ const params = new URLSearchParams(location.search);
 const DEMO = location.hostname.endsWith('github.io') || params.has('demo') || document.documentElement.dataset.mode === 'demo' || location.protocol === 'file:';
 let demo = null;
 
-let state = { people: [], availability: [], needs: [], events: [], members: [] }, actor, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
+let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
 
 const admin = () => actor?.role === 'coordinator';
 const date = () => $('#date').value;
@@ -51,6 +51,30 @@ function accept(data) {
   const sync = $('#sync'); sync.classList.remove('offline');
   sync.textContent = DEMO ? 'Tallennettu tähän selaimeen' : 'Yhteinen tilanne · päivitetty ' + new Date(data.serverTime).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
   $('#connection').hidden = true; $('#workspace').hidden = false; render();
+  announce();
+}
+
+/* ---------- Ilmoitukset ---------- */
+const myKey = () => admin() ? 'coordinator' : actor?.personId;
+const myNotes = () => (state.notifications || []).filter(n => n.to === myKey()).sort((a, b) => b.at.localeCompare(a.at));
+function announce() {
+  const fresh = myNotes().filter(n => !n.read && seen && !seen.has(n.id));
+  seen = new Set(myNotes().map(n => n.id));
+  if (!fresh.length) return;
+  $('#bell').classList.remove('ring'); void $('#bell').offsetWidth; $('#bell').classList.add('ring');
+  message(fresh.length === 1 ? 'Uusi ilmoitus: ' + fresh[0].text : `${fresh.length} uutta ilmoitusta.`);
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { for (const n of fresh.slice(0, 3)) new Notification('Sijaispöytä', { body: n.text, icon: './img/favicon.png', tag: n.id }); } catch { /* esim. mobiiliselain */ }
+  }
+}
+function notesModal() {
+  const list = myNotes();
+  const ago = at => { const m = Math.round((Date.now() - new Date(at)) / 60000); return m < 1 ? 'juuri nyt' : m < 60 ? `${m} min sitten` : new Date(at).toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const canAsk = 'Notification' in window && Notification.permission === 'default';
+  modal('Ilmoitukset', `<div class="notes">${list.map(n => `<div class="note-item t-${esc(n.type)} ${n.read ? '' : 'unread'}"><span class="dot"></span><div><p>${esc(n.text)}</p><small>${esc(ago(n.at))}</small>${n.date ? `<button class="link" data-open-note="${esc(n.id)}">Näytä päivä</button>` : ''}</div></div>`).join('') || '<p class="muted">Ei ilmoituksia. Saat tiedon täällä, kun joku ilmoittautuu, sijaisuus vahvistetaan tai perutaan.</p>'}</div>
+    <div class="note-tools">${canAsk ? '<button id="allow-push" class="ghost sm">Salli ilmoitukset tällä laitteella</button>' : '<span></span>'}${list.some(n => !n.read) ? '<button id="mark-read" class="primary sm">Merkitse luetuiksi</button>' : ''}</div>`);
+  $('#allow-push')?.addEventListener('click', async () => { const r = await Notification.requestPermission(); $('#allow-push').textContent = r === 'granted' ? 'Selainilmoitukset sallittu ✓' : 'Ilmoituksia ei sallittu'; $('#allow-push').disabled = true; });
+  $('#mark-read')?.addEventListener('click', async () => { try { await mutate('markRead', { ids: 'all' }); $('#modal').close(); } catch (e) { message(e.message, true); } });
 }
 async function refresh(silent = false) {
   if (busy || $('#modal').open) return;
@@ -170,6 +194,10 @@ function render() {
   document.querySelectorAll('[data-admin]').forEach(el => el.hidden = !isAdmin);
   $('#new-need').hidden = tab === 'people' || (!isAdmin && person(actor.personId)?.kind !== 'staff');
 
+  const unread = myNotes().filter(n => !n.read).length;
+  $('#bell').hidden = false; $('#bell-count').hidden = !unread; $('#bell-count').textContent = unread > 9 ? '9+' : unread;
+  $('#bell').setAttribute('aria-label', unread ? `Ilmoitukset, ${unread} lukematonta` : 'Ilmoitukset');
+
   // Otsikko
   const heads = {
     board: ['Päivän sijaisuudet', 'Näet yhdellä silmäyksellä, mitkä tehtävät ovat avoinna, kuka on ilmoittautunut ja kuka on vahvistettu.'],
@@ -222,6 +250,7 @@ function guide() {
     <li>Vaihda yläkulmasta rooliksi <b>Elias Lehto · sijainen</b> ja paina pääainetunnin kohdalla <b>Voin sijaistaa</b>.</li>
     <li>Vaihda takaisin <b>Sijaisvastaavaksi</b> ja vahvista Elias. Kokeile myös <b>Peru vahvistus</b>: tehtävä avautuu uudelleen.</li>
     <li>Merkitse uusi poissaolo ja lisää jollekulle saatavuus <b>Henkilöt ja saatavuus</b> -välilehdellä.</li>
+    <li><b>Ilmoitukset:</b> avaa sivu kahteen välilehteen, toisessa sijaisvastaava ja toisessa Elias. Kun Elias ilmoittautuu, sijaisvastaavan kello soi. Vahvistuksesta tieto menee Eliakselle ja poissa olevalle opettajalle (Anna Aalto).</li>
     <li>Kokeile <b>Kopioi viesti</b> (WhatsApp-sijaispyyntö) ja <b>Tilanneraportti</b>.</li>
   </ol><p class="form-help" style="margin-top:14px">Kaikki tiedot ovat kuvitteellisia ja pysyvät vain tässä selaimessa. “Palauta esimerkkitilanne” sivun alareunassa aloittaa alusta.</p>
   <div class="form-actions"><button class="primary" data-close>Aloitetaan</button></div>`);
@@ -238,6 +267,7 @@ $('#self-person').addEventListener('change', render);
 $('#close-modal').addEventListener('click', () => { if (!busy) $('#modal').close(); });
 $('#self-availability').addEventListener('click', () => availabilityModal(self()));
 $('#demo-guide').addEventListener('click', guide);
+$('#bell').addEventListener('click', notesModal);
 $('#new-person').addEventListener('click', () => modal('Lisää henkilö', `<form><label>Nimi<input name="name" maxlength="100" required autocomplete="off"></label><label>Ryhmä<select name="kind"><option value="pool">Ulkopuolinen sijaispooli</option><option value="staff">Oma henkilöstö</option></select></label><label>Osaaminen<input name="skills" maxlength="200" placeholder="esim. luokanopetus 1–6, musiikki"></label><div class="form-actions"><button type="button" class="ghost" data-close>Peruuta</button><button class="primary" type="submit">Lisää henkilö</button></div></form>`, data => mutate('addPerson', data, DEMO ? 'Henkilö lisätty.' : 'Henkilö lisätty. Liitä seuraavaksi hänen kirjautumistunnuksensa.')));
 $('#new-need').addEventListener('click', () => {
   const staff = state.people.filter(p => p.kind === 'staff');
@@ -260,12 +290,14 @@ $('#history').addEventListener('click', () => {
 $('#export').addEventListener('click', () => { const blob = new Blob([JSON.stringify({ ...state, revision, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' }), url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `sijaispoyta-${date()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
 $('#reset').addEventListener('click', () => modal('Palauta esimerkkitilanne', `<form><p>${DEMO ? 'Tämä palauttaa testiversion alkuperäiset esimerkkihenkilöt ja -sijaisuudet tähän selaimeen.' : 'Tämä korvaa yhteisen tietokannan esimerkkihenkilöt ja sijaisuudet kaikkien näkymissä. Vie tiedot ensin talteen tarvittaessa. Palautus on sallittu vain ilman sijaisiin liitettyjä kirjautumistunnuksia.'}</p><div class="form-actions"><button type="button" class="ghost" data-close>Peruuta</button><button class="primary" type="submit">Palauta esimerkit</button></div></form>`, () => mutate('resetDemo', {}, 'Esimerkkitilanne palautettu.')));
 $('#demo-role').addEventListener('change', e => {
-  demo.setRole(e.target.value); revision = -1; tab = e.target.value === 'coordinator' ? 'board' : 'self';
+  demo.setRole(e.target.value); revision = -1; seen = null; tab = e.target.value === 'coordinator' ? 'board' : 'self';
   refresh().then(() => message(e.target.value === 'coordinator' ? 'Olet nyt sijaisvastaava.' : `Olet nyt ${name(actor.personId)}.`));
 });
 
 document.body.addEventListener('click', async e => {
   if (e.target.closest('[data-close]')) { e.preventDefault(); if (!busy) $('#modal').close(); return; }
+  const o = e.target.closest('[data-open-note]');
+  if (o) { const n = myNotes().find(x => x.id === o.dataset.openNote); $('#modal').close(); if (n?.date) $('#date').value = n.date; tab = admin() ? 'board' : 'self'; filter = 'all'; render(); const card = n?.needId && [...document.querySelectorAll('.need')].find(c => c.dataset.need === n.needId && !c.closest('[hidden]')); if (card) { card.classList.add('focus'); card.scrollIntoView({ block: 'center' }); } return; }
   const f = e.target.closest('[data-filter]'); if (f) { filter = f.dataset.filter; render(); return; }
   const b = e.target.closest('[data-action]'); if (!b || busy) return;
   const action = b.dataset.action, id = b.dataset.id, n = state.needs.find(x => x.id === id);

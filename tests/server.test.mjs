@@ -93,3 +93,27 @@ test('Rajapinnan muutos näkyy toisessa lukijassa ja raportissa',async()=>{
   assert.ok(data.state.needs.find(n=>n.id==='n1').notes);
   const report=await (await handleApi(request('/api/report',admin),env)).json();assert.match(report.text,/VAHVISTETTU: Elias Lehto/);
 });
+
+test('Ilmoitukset menevät oikeille ihmisille', () => {
+  const s = initial(), coord = actorFor(s, admin, admin.email), elias = actorFor(s, sub);
+  execute(s, elias, 'apply', { id: 'n1' });
+  let mine = s.notifications.filter(n => n.to === 'coordinator');
+  assert.equal(mine.length, 1); assert.match(mine[0].text, /Elias Lehto ilmoittautui/);
+  execute(s, coord, 'confirm', { id: 'n1', personId: 'elias' });
+  assert.match(s.notifications.find(n => n.to === 'elias').text, /vahvistettu sijaiseksi/);
+  assert.match(s.notifications.find(n => n.to === 'anna').text, /Sijaisesi on vahvistettu: Elias Lehto/);
+  execute(s, coord, 'cancel', { id: 'n1' });
+  assert.equal(s.notifications.filter(n => n.to === 'elias').length, 2);
+  assert.match(s.notifications.filter(n => n.to === 'anna').at(-1).text, /avautui uudelleen/);
+  // Sijainen näkee vain omat ilmoituksensa ja voi kuitata vain ne.
+  const view = project(s, elias);
+  assert.ok(view.notifications.length === 2 && view.notifications.every(n => n.to === 'elias'));
+  execute(s, elias, 'markRead', { ids: 'all' });
+  assert.ok(s.notifications.filter(n => n.to === 'elias').every(n => n.read));
+  assert.ok(s.notifications.filter(n => n.to !== 'elias').every(n => !n.read));
+});
+test('Oma toiminto ei tee ilmoitusta itselle', () => {
+  const s = initial(), coord = actorFor(s, admin, admin.email);
+  execute(s, coord, 'addNeed', { teacherId: 'pekka', date: s.needs[0].date, start: '13:00', end: '14:00', group: '5. luokka', subject: 'Musiikki' });
+  assert.equal(s.notifications.filter(n => n.to === 'coordinator').length, 0);
+});

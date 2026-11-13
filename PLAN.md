@@ -44,6 +44,19 @@ Valitaan toteutusalusta sen jälkeen, kun koulun tunnukset, ylläpito ja lukujä
 - Sijaisuustuntien yhteenveto ja kuormituksen tasainen jakaminen vastuuhenkilön tukena.
 - Agentille vain lukuoikeudellinen yhteenvetorajapinta. Raportointi avoimista tarpeista ja poikkeuksista valittuun kanavaan.
 
+## Ilmoitukset
+
+Toteutettu (0.4): sovelluksen sisäiset ilmoitukset tilamuutoksista ja selainilmoitukset avoimella sivulla. Ilmoitukset syntyvät palvelimella samassa tallennuksessa kuin muutos, joten ne eivät voi jäädä tekemättä tai syntyä kahdesti.
+
+Seuraavat askeleet, kun koulu valitsee kanavan:
+
+1. **Sähköposti** (suositeltu ensimmäiseksi): Cloudflare-ajastus tai sähköpostipalvelu (esim. Resend) lukee lähettämättömät ilmoitukset ja merkitsee ne lähetetyiksi. Tarvitaan henkilön sähköposti tai kirjautumistunnuksen osoite sekä lähettäjäosoite koulun verkkotunnuksesta.
+2. **Push-ilmoitus puhelimeen** (Web Push): toimii, vaikka sivu on kiinni. Vaatii palvelimelle VAPID-avaimet ja tilausten tallennuksen.
+3. **Tekstiviesti tai WhatsApp**: vaatii maksullisen rajapinnan (esim. WhatsApp Business) ja puhelinnumerot. Viestiin vain aika, luokka ja linkki; ei poissaolon syytä.
+4. **Aamukooste sijaisvastaavalle**: ajastettu yhteenveto klo 7 vahvistamattomista tehtävistä. Toteutetaan sovelluksen ajastuksena tai agentilla, joka lukee vain lukuoikeudellista raporttirajapintaa.
+
+Henkilötiedot ja ilmoitukset pysyvät sovelluksen tietokannassa. Git ja GitHub versioivat vain ohjelman.
+
 ## Agentin ja Gitin vastuut
 
 Git versioi ohjelman lähdekoodin, testit ja suunnitelman. Agentti voi tehdä haaran, korjata ohjelmaa, ajaa testit ja tehdä muutosehdotuksen GitHubissa, kun GitHub-yhteys on käytössä.
