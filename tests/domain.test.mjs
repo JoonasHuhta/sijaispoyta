@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {seed,validSlot,eligibility,addAvailability,removeAvailability,addNeed,apply,confirmAssignment,cancelAssignment,status,report} from '../public/domain.js';
+test('Ilmoittautuminen ja vahvistaminen ovat eri vaiheita',()=>{const s=seed();apply(s,'n1','elias');assert.equal(status(s.needs[0]),'pending');confirmAssignment(s,'n1','elias');assert.equal(s.needs[0].assignedId,'elias');});
+test('Päällekkäinen varaus estetään myös vahvistettaessa vanha ilmoittautuminen',()=>{const s=seed();const n=structuredClone(s.needs[0]);n.id='overlap';n.teacherId='pekka';s.needs.push(n);apply(s,'n1','elias');apply(s,'overlap','elias');confirmAssignment(s,'n1','elias');assert.throws(()=>confirmAssignment(s,'overlap','elias'),/päällekkäinen/);});
+test('Peruutus avaa tarpeen ja poistaa peruneen ilmoittautumisen',()=>{const s=seed();cancelAssignment(s,'n3');assert.equal(status(s.needs[2]),'open');assert.equal(s.events[0].type,'cancelled');});
+test('Omaa poissaoloa ei voi sijaistaa',()=>{const s=seed();assert.match(eligibility(s,s.needs[0],'anna'),/poissaolevaksi/);});
+test('Osittainen saatavuus ei riitä koko sijaisuuteen',()=>{const s=seed();assert.match(eligibility(s,s.needs[0],'maija'),/koko/);});
+test('Ulkopuolinen henkilö käy ehdokkaaksi ilmoitetun saatavuuden perusteella',()=>{const s=seed();assert.equal(eligibility(s,s.needs[0],'elias'),null);});
+test('Vahvistukseen vaaditaan ilmoittautuminen',()=>{const s=seed();assert.throws(()=>confirmAssignment(s,'n1','elias'),/ilmoittautunut/);});
+test('Virheelliset ja tyhjät aikavälit hylätään',()=>{assert.equal(validSlot({date:'2026-02-30',start:'08:30',end:'10:00'}),false);assert.equal(validSlot({date:'2026-11-13',start:'10:00',end:'08:30'}),false);});
+test('Vahvistuksen käyttämää saatavuutta ei poisteta vahingossa',()=>{const s=seed();assert.throws(()=>removeAvailability(s,'av1'),/Peru ensin/);});
+test('Samalle opettajalle ei avata päällekkäisiä poissaoloja',()=>{const s=seed();assert.throws(()=>addNeed(s,s.needs[0]),/päällekkäinen/);});
+test('Vahvistetun sijaisen poissaolo vaatii ensin peruutuksen',()=>{const s=seed();assert.throws(()=>addNeed(s,{...s.needs[2],teacherId:'maija'}),/Peru se ensin/);});
+test('Vierekkäiset tunnit sallitaan',()=>{const s=seed();const n=addNeed(s,{...s.needs[0],start:'10:00',end:'11:00'});apply(s,'n1','elias');confirmAssignment(s,'n1','elias');assert.equal(eligibility(s,n,'elias'),null);});
+test('Sama saatavuus ei monistu',()=>{const s=seed();assert.throws(()=>addAvailability(s,s.availability[0]),/jo merkitty/);});
+test('Raportissa näkyvät vahvistamattomat ja vastuut',()=>{const s=seed();const text=report(s,s.needs[0].date);assert.match(text,/3 sijaisuutta · 1 vahvistettu · 2 vahvistamatta/);assert.match(text,/Sijaisvastaava A/);});
