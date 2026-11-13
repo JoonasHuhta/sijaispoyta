@@ -258,3 +258,9 @@ form{display:grid;gap:14px}
 .note-item .link{font-size:13px;padding:0;margin-left:8px}
 .note-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
 @media(max-width:620px){.bell{width:40px;height:40px;flex:none}}
+
+.mail-prefs{display:grid;gap:8px;margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:#fafbfe}
+.mail-prefs .muted{font-size:13px;margin-top:-6px}
+.check{display:flex;gap:9px;align-items:center;font-weight:500}
+.check input{width:18px;height:18px;accent-color:var(--navy)}
+.digest{white-space:pre-wrap;font:14px/1.6 Figtree,system-ui,sans-serif;background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0;max-height:52vh;overflow:auto}

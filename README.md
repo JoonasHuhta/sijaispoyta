@@ -50,9 +50,36 @@ Sovellus tekee ilmoituksen aina, kun sijaisuuden tila muuttuu. Ilmoitukset näky
 | Opettaja merkitsee itse poissaolon | Sijaisvastaava |
 | Sijainen ilmoittaa saatavuuden | Sijaisvastaava |
 
-Säännöt ovat tiedostossa `server/board.js` (`notify`). Kukin näkee vain omat ilmoituksensa. Oma toiminto ei tee ilmoitusta tekijälle itselleen. Ilmoituslista on samalla lähtölaatikko: sähköposti, tekstiviesti tai muu kanava voidaan liittää myöhemmin lukemaan siitä lähettämättömät ilmoitukset (ks. PLAN.md).
+Säännöt ovat tiedostossa `server/board.js` (`notify`). Kukin näkee vain omat ilmoituksensa, eikä oma toiminto tee ilmoitusta tekijälle itselleen.
 
-Testiversiossa ilmoitukset toimivat saman selaimen välilehtien välillä: avaa sivu kahteen välilehteen ja valitse kumpaankin eri rooli.
+Testiversiossa ilmoitukset kulkevat saman selaimen välilehtien välillä: avaa sivu kahteen välilehteen ja valitse kumpaankin eri rooli.
+
+### Sähköposti
+
+Jokainen valitsee kellon kautta itse, saako hän ilmoitukset ja aamukoosteen sähköpostiin. Osoitteena on kirjautumistunnukseen liitetty sähköposti. Lähetys tapahtuu palvelimella heti tallennuksen jälkeen (`server/mail.js`). Jokainen ilmoitus merkitään käsitellyksi ennen lähetystä, joten sama viesti ei lähde kahdesti.
+
+### Aamukooste ("agentti")
+
+Arkiaamuisin klo 7 GitHub Actions (`.github/workflows/digest.yml`) herättää sovelluksen. Sovellus kokoaa tilanteen omasta tietokannastaan (`server/digest.js`):
+
+- **Sijaisvastaava:** tämän päivän ja seuraavan koulupäivän sijaisuudet. Ensin vahvistamattomat, ja kunkin kohdalla ilmoittautuneet ja käytettävissä olevat.
+- **Sijainen:** muistutus päivän sijaisuuksista ohjeineen sekä seuraavan koulupäivän sijaisuudet.
+- **Poissa oleva opettaja:** kuka sijaistaa, tai tieto että sijaista ei ole vielä vahvistettu.
+
+Hiljaisena aamuna viestiä ei lähetetä. Kooste lähtee kerran päivässä. GitHubin kautta ei kulje henkilötietoja, sillä vastaus sisältää vain lukumääriä. Koosteen voi esikatsella sovelluksessa painikkeella **Aamukooste**.
+
+### Käyttöönotto
+
+1. Luo tili sähköpostipalveluun [Resend](https://resend.com) ja vahvista lähettäjän verkkotunnus (esim. koulun oma).
+2. Lisää Sites-julkaisun salaisuuksiin (samaan paikkaan kuin `ADMIN_EMAIL`):
+   - `RESEND_API_KEY`: Resendin API-avain
+   - `MAIL_FROM`: esim. `Sijaispöytä <sijaispoyta@koulu.fi>`
+   - `SITE_URL`: sovelluksen osoite viestien linkkejä varten
+   - `CRON_TOKEN`: pitkä satunnainen merkkijono (vähintään 24 merkkiä)
+3. Lisää GitHubiin (Settings → Secrets and variables → Actions) `SIJAISPOYTA_URL` ja `SIJAISPOYTA_CRON_TOKEN` (sama kuin `CRON_TOKEN`).
+4. Testaa: Actions → Aamukooste → Run workflow (esikatselu ei lähetä mitään).
+
+Ajastettu pyyntö tulee ilman ChatGPT-kirjautumista ja tunnistetaan `CRON_TOKEN`illa. Jos Sites ohjaa kaikki kirjautumattomat pyynnöt kirjautumiseen, ajastus ei tavoita sovellusta. Silloin aamukooste ajetaan Cloudflaren omalla ajastuksella tai muulla palvelimella (ks. PLAN.md).
 
 ## Ulkoasu
 

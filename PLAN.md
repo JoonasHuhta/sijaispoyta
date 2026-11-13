@@ -48,12 +48,13 @@ Valitaan toteutusalusta sen jälkeen, kun koulun tunnukset, ylläpito ja lukujä
 
 Toteutettu (0.4): sovelluksen sisäiset ilmoitukset tilamuutoksista ja selainilmoitukset avoimella sivulla. Ilmoitukset syntyvät palvelimella samassa tallennuksessa kuin muutos, joten ne eivät voi jäädä tekemättä tai syntyä kahdesti.
 
-Seuraavat askeleet, kun koulu valitsee kanavan:
+Toteutettu (0.5): sähköposti-ilmoitukset henkilökohtaisella kytkimellä ja aamukooste arkiaamuisin klo 7 (GitHub Actions -ajastus → `/api/cron/digest`). Käyttöönotto: README, kohta Ilmoitukset → Käyttöönotto.
 
-1. **Sähköposti** (suositeltu ensimmäiseksi): Cloudflare-ajastus tai sähköpostipalvelu (esim. Resend) lukee lähettämättömät ilmoitukset ja merkitsee ne lähetetyiksi. Tarvitaan henkilön sähköposti tai kirjautumistunnuksen osoite sekä lähettäjäosoite koulun verkkotunnuksesta.
-2. **Push-ilmoitus puhelimeen** (Web Push): toimii, vaikka sivu on kiinni. Vaatii palvelimelle VAPID-avaimet ja tilausten tallennuksen.
-3. **Tekstiviesti tai WhatsApp**: vaatii maksullisen rajapinnan (esim. WhatsApp Business) ja puhelinnumerot. Viestiin vain aika, luokka ja linkki; ei poissaolon syytä.
-4. **Aamukooste sijaisvastaavalle**: ajastettu yhteenveto klo 7 vahvistamattomista tehtävistä. Toteutetaan sovelluksen ajastuksena tai agentilla, joka lukee vain lukuoikeudellista raporttirajapintaa.
+Seuraavaksi:
+
+1. **Push-ilmoitus puhelimeen** (Web Push, maksuton): palvelutyöntekijä (service worker), VAPID-avaimet, tilausten tallennus ja lähetys palvelimelta. Android: toimii Chromessa suoraan. iPhone (iOS 16.4+): sivu lisätään ensin kotivalikkoon, minkä jälkeen ilmoitukset voi sallia. Sovelluskauppaa ei tarvita. Sovelluksessa on jo manifesti ja kuvakkeet kotivalikkoon lisäämistä varten.
+2. **WhatsApp**: WhatsApp Business Platform, maksullinen viestikohtaisesti. Tarvitaan Meta-yritystili, vahvistettu numero, hyväksytyt viestipohjat ja puhelinnumerot. Viestiin vain aika, luokka ja linkki; ei poissaolon syytä. Siihen asti sijaispyynnön voi kopioida WhatsAppiin käsin.
+3. **Varajärjestely aamukoosteelle**: jos Sitesin kirjautuminen estää ajastetut pyynnöt, ajastus siirretään Cloudflaren cron-triggeriin samassa workerissa.
 
 Henkilötiedot ja ilmoitukset pysyvät sovelluksen tietokannassa. Git ja GitHub versioivat vain ohjelman.
 

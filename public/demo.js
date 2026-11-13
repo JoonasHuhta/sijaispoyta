@@ -21,7 +21,7 @@ export async function createDemo() {
   // _site/-rakenteessa board.js on kansiossa ./server/, suoraan repon juuresta julkaistuna ../server/.
   let board;
   try { board = await import('./server/board.js'); } catch { board = await import('../server/board.js'); }
-  const { execute, project } = board;
+  const { execute, project, buildDigest } = board;
   let role = session.get(ROLE_KEY) || 'coordinator';
 
   const fresh = () => ({ revision: 0, state: { ...seed(), members: [], requests: [] } });
@@ -60,6 +60,11 @@ export async function createDemo() {
         if (actorFor(data.state).role !== 'coordinator') throw new Error('Raportti kuuluu sijaisvastaavalle.');
         const date = url.searchParams.get('date') || today();
         return { date, revision: data.revision, generatedAt: new Date().toISOString(), text: report(data.state, date).replace('Prototyypin selaintiedot.', 'Testiversion tiedot tästä selaimesta.') };
+      }
+      if (url.pathname.endsWith('/api/digest')) {
+        const actor = actorFor(data.state), date = url.searchParams.get('date') || today();
+        const digest = buildDigest(data.state, date);
+        return { date, digest: (actor.role === 'coordinator' ? digest.coordinator : digest.people[actor.personId]) || null, mail: false };
       }
       if ((options.method || 'GET') === 'POST') {
         const command = JSON.parse(options.body);

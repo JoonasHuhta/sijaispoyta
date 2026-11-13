@@ -1,3 +1,6 @@
+import { buildDigest } from './digest.js';
+export { buildDigest };
+import { mailConfigured, deliverPending, runDigest } from './mail.js';
 import { seed, uid, addPerson, addAvailability, removeAvailability, addNeed, apply, confirmAssignment, cancelAssignment, eligibility, today, report } from '../public/domain.js';
 
 export class HttpError extends Error {
@@ -32,6 +35,7 @@ export function project(state, actor) {
     })),
     events: state.events.filter(e => e.personId === ownId).map(({ actorId, ...event }) => event),
     notifications: (state.notifications || []).filter(n => n.to === ownId),
+    emailPrefs: state.emailPrefs?.[actor.id] ? { [actor.id]: state.emailPrefs[actor.id] } : {},
   };
 }
 
@@ -114,6 +118,12 @@ export function execute(state, actor, action, data = {}) {
       if (members.some(m => m.role !== 'coordinator')) fail(409, 'Poista ensin kokeilutunnusten liitokset ennen esimerkkien palautusta.');
       Object.assign(state, seed(), { members, notifications: [] }); break;
     }
+    case 'emailPrefs': {
+      if (!actor.email) fail(400, 'Tunnukseen ei ole liitetty sähköpostiosoitetta.');
+      state.emailPrefs ||= {};
+      state.emailPrefs[actor.id] = { notify: data.notify === true, digest: data.digest === true };
+      return;
+    }
     case 'markRead': {
       const key = recipientKey(actor);
       const ids = data.ids === 'all' ? null : data.ids;
@@ -135,6 +145,16 @@ export class BoardStore {
     await this.db.prepare('INSERT OR IGNORE INTO board (id, revision, body) VALUES (1, 0, ?)').bind(JSON.stringify(initial)).run();
     const row = await this.db.prepare('SELECT revision, body FROM board WHERE id = 1').first();
     return { revision: row.revision, state: JSON.parse(row.body) };
+  }
+  /** Ajaa muutoksen vertaa-ja-vaihda -silmukassa ja palauttaa funktion tuloksen. */
+  async mutate(change) {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const { revision, state } = await this.read();
+      const result = change(state);
+      const saved = await this.db.prepare('UPDATE board SET body = ?, revision = revision + 1 WHERE id = 1 AND revision = ?').bind(JSON.stringify(state), revision).run();
+      if (saved.meta.changes === 1) return result;
+    }
+    fail(409, 'Tilanne muuttui samaan aikaan. Yritä uudelleen.');
   }
   async update(identity, adminEmail, command) {
     for (let attempt = 0; attempt < 6; attempt++) {
@@ -160,17 +180,43 @@ export class BoardStore {
 }
 
 const json = (body, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+const sameToken = (a, b) => { if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false; let x = 0; for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i); return x === 0; };
+async function handleCron(request, env) {
+  // Ajastettu aamukooste (GitHub Actions tai muu ajastin). Ei ChatGPT-kirjautumista, vaan oma salainen token.
+  if (request.method !== 'POST') fail(405, 'Käytä POST-pyyntöä.');
+  if (!env.CRON_TOKEN || env.CRON_TOKEN.length < 24) fail(503, 'Ajastusta ei ole kytketty (CRON_TOKEN puuttuu).');
+  const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!sameToken(token, env.CRON_TOKEN)) fail(401, 'Virheellinen tunniste.');
+  if (!env.DB) fail(503, 'Yhteistä tietokantaa ei ole vielä kytketty.');
+  const url = new URL(request.url);
+  const minHour = Number(url.searchParams.get('minHour') || 0);
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Helsinki', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+  const day = new Date(today() + 'T12:00:00Z').getUTCDay();
+  if (day === 0 || day === 6) return json({ skipped: 'viikonloppu' });
+  if (hour < minHour) return json({ skipped: 'liian aikaista', hour });
+  const origin = env.SITE_URL || url.origin;
+  return json(await runDigest(new BoardStore(env.DB), env, { origin, dry: url.searchParams.get('dry') === '1' }));
+}
+
 export async function handleApi(request, env) {
   try {
+    if (new URL(request.url).pathname === '/api/cron/digest') return await handleCron(request, env);
     const identity = { id: request.headers.get('oai-authenticated-user-id'), email: request.headers.get('oai-authenticated-user-email') };
     if (!identity.id || !identity.email) fail(401, 'Kirjaudu ensin ChatGPT:llä.');
     if (!env.DB) fail(503, 'Yhteistä tietokantaa ei ole vielä kytketty.');
     const url = new URL(request.url);
     const store = new BoardStore(env.DB);
     let result;
-    if (request.method === 'GET' && ['/api/state', '/api/report'].includes(url.pathname)) {
+    if (request.method === 'GET' && ['/api/state', '/api/report', '/api/digest'].includes(url.pathname)) {
       result = await store.read();
       result.actor = actorFor(result.state, identity, env.ADMIN_EMAIL);
+      if (url.pathname === '/api/digest') {
+        const date = url.searchParams.get('date') || today();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Tarkista päivä.');
+        const digest = buildDigest(result.state, date);
+        const own = result.actor.role === 'coordinator' ? digest.coordinator : digest.people[result.actor.personId];
+        return json({ date, digest: own || null, mail: mailConfigured(env) });
+      }
       if (url.pathname === '/api/report') {
         if (result.actor.role !== 'coordinator') fail(403, 'Raportti kuuluu sijaisvastaavalle.');
         const date = url.searchParams.get('date') || today();
@@ -188,10 +234,12 @@ export async function handleApi(request, env) {
       try { command = JSON.parse(raw); } catch { fail(400, 'Virheellinen JSON.'); }
       if (!command || typeof command.action !== 'string' || typeof command.requestId !== 'string' || !/^[a-zA-Z0-9-]{16,64}$/.test(command.requestId) || !command.data || typeof command.data !== 'object' || Array.isArray(command.data)) fail(400, 'Tarkista pyynnön tiedot.');
       result = await store.update(identity, env.ADMIN_EMAIL, command);
+      try { await deliverPending(store, env, env.SITE_URL || url.origin); } catch (error) { console.error('Ilmoitusten lähetys:', error.message); }
     } else fail(404, 'Rajapintaa ei löydy.');
     const visible = project(result.state, result.actor);
     delete visible.requests;
-    return json({ revision: result.revision, state: visible, actor: result.actor, serverTime: new Date().toISOString() });
+    delete visible.digestSent;
+    return json({ revision: result.revision, state: visible, actor: result.actor, mail: mailConfigured(env), serverTime: new Date().toISOString() });
   } catch (error) {
     if (error instanceof HttpError) return json({ error: error.message }, error.status);
     // Domain validation errors are safe, user-facing messages. Database failures are not.

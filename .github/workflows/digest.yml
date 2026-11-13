@@ -1,0 +1,39 @@
+# Aamukooste-agentti: herättää Sijaispöydän arkiaamuisin klo 7 (Suomen aikaa).
+# Sovellus kokoaa tilanteen omasta tietokannastaan ja lähettää sähköpostit.
+# Henkilötiedot eivät kulje GitHubin kautta: vastaus sisältää vain lukumääriä.
+#
+# Käyttöönotto (Settings → Secrets and variables → Actions):
+#   SIJAISPOYTA_URL         esim. https://sijaispoyta.example  (ilman lopun kauttaviivaa)
+#   SIJAISPOYTA_CRON_TOKEN  sama pitkä satunnainen merkkijono kuin sovelluksen CRON_TOKEN
+name: Aamukooste
+on:
+  schedule:
+    # Kaksi ajoa kattaa kesä- ja talviajan; sovellus lähettää vain kerran päivässä klo 7 jälkeen.
+    - cron: '0 4 * * 1-5'
+    - cron: '0 5 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: 'Vain esikatselu: kerro montako viestiä lähtisi, älä lähetä'
+        type: boolean
+        default: true
+permissions: {}
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Pyydä aamukooste
+        env:
+          URL: ${{ secrets.SIJAISPOYTA_URL }}
+          TOKEN: ${{ secrets.SIJAISPOYTA_CRON_TOKEN }}
+          DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry && '1' || '0' }}
+          MIN_HOUR: ${{ github.event_name == 'schedule' && '7' || '0' }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
+            echo "Aamukoostetta ei ole vielä kytketty: lisää salaisuudet SIJAISPOYTA_URL ja SIJAISPOYTA_CRON_TOKEN."
+            exit 0
+          fi
+          curl -fsS --max-time 60 -X POST "$URL/api/cron/digest?minHour=$MIN_HOUR&dry=$DRY" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data '{}'
+          echo

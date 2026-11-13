@@ -8,7 +8,7 @@ const params = new URLSearchParams(location.search);
 const DEMO = location.hostname.endsWith('github.io') || params.has('demo') || document.documentElement.dataset.mode === 'demo' || location.protocol === 'file:';
 let demo = null;
 
-let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
+let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, mailOn = false, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
 
 const admin = () => actor?.role === 'coordinator';
 const date = () => $('#date').value;
@@ -46,7 +46,7 @@ async function api(path, init) {
 }
 function accept(data) {
   if (data.revision < revision) return;
-  state = data.state; actor = data.actor; revision = data.revision;
+  state = data.state; actor = data.actor; revision = data.revision; mailOn = Boolean(data.mail);
   if (!admin() && tab === 'board') tab = 'self';
   const sync = $('#sync'); sync.classList.remove('offline');
   sync.textContent = DEMO ? 'Tallennettu tähän selaimeen' : 'Yhteinen tilanne · päivitetty ' + new Date(data.serverTime).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
@@ -67,13 +67,26 @@ function announce() {
     try { for (const n of fresh.slice(0, 3)) new Notification('Sijaispöytä', { body: n.text, icon: './img/favicon.png', tag: n.id }); } catch { /* esim. mobiiliselain */ }
   }
 }
+async function digestModal() {
+  try {
+    const r = await api('/api/digest?date=' + encodeURIComponent(date()));
+    const body = r.digest ? `<p class="form-help" style="margin-bottom:10px">${esc(r.digest.subject)}</p><pre class="digest">${esc(r.digest.text)}</pre>` : `<p class="muted">${admin() ? 'Ei koostettavaa: ei sijaisuuksia tänään eikä seuraavana koulupäivänä. Hiljaisena aamuna viestiä ei lähetetä.' : 'Sinulle ei ole tälle päivälle sijaisuuksia eikä poissaoloja. Hiljaisena aamuna viestiä ei lähetetä.'}</p>`;
+    modal('Aamukooste – ' + dayName(date()).replace(/ · .*/, '').toLowerCase(), `${body}<p class="form-help" style="margin-top:12px">${DEMO ? 'Oikeassa versiossa tämä lähetetään arkiaamuisin klo 7 sähköpostiin niille, jotka ovat ottaneet sen käyttöön kellon kautta.' : mailOn ? 'Lähetetään arkiaamuisin klo 7 niille, jotka ovat ottaneet aamukoosteen käyttöön.' : 'Sähköpostilähetys ei ole vielä käytössä. Tämä on esikatselu.'}</p>`);
+  } catch (e) { message(e.message, true); }
+}
 function notesModal() {
   const list = myNotes();
   const ago = at => { const m = Math.round((Date.now() - new Date(at)) / 60000); return m < 1 ? 'juuri nyt' : m < 60 ? `${m} min sitten` : new Date(at).toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); };
   const canAsk = 'Notification' in window && Notification.permission === 'default';
   modal('Ilmoitukset', `<div class="notes">${list.map(n => `<div class="note-item t-${esc(n.type)} ${n.read ? '' : 'unread'}"><span class="dot"></span><div><p>${esc(n.text)}</p><small>${esc(ago(n.at))}</small>${n.date ? `<button class="link" data-open-note="${esc(n.id)}">Näytä päivä</button>` : ''}</div></div>`).join('') || '<p class="muted">Ei ilmoituksia. Saat tiedon täällä, kun joku ilmoittautuu, sijaisuus vahvistetaan tai perutaan.</p>'}</div>
-    <div class="note-tools">${canAsk ? '<button id="allow-push" class="ghost sm">Salli ilmoitukset tällä laitteella</button>' : '<span></span>'}${list.some(n => !n.read) ? '<button id="mark-read" class="primary sm">Merkitse luetuiksi</button>' : ''}</div>`);
+    ${!DEMO && actor.email ? (() => { const pr = state.emailPrefs?.[actor.id] || {}; return `<form id="mail-prefs" class="mail-prefs"><strong>Sähköposti</strong><span class="muted">${esc(actor.email)}</span>
+      <label class="check"><input type="checkbox" name="notify" ${pr.notify ? 'checked' : ''}> Lähetä ilmoitukset myös sähköpostiin</label>
+      <label class="check"><input type="checkbox" name="digest" ${pr.digest ? 'checked' : ''}> Aamukooste arkiaamuisin klo 7</label>
+      ${mailOn ? '' : '<p class="form-help">Koulun sähköpostilähetys ei ole vielä kytketty. Valinta tallentuu ja alkaa toimia, kun se otetaan käyttöön.</p>'}</form>`; })() : ''}
+    <div class="note-tools"><button id="open-digest" class="ghost sm">Aamukooste</button>${canAsk ? '<button id="allow-push" class="ghost sm">Salli ilmoitukset tällä laitteella</button>' : '<span></span>'}${list.some(n => !n.read) ? '<button id="mark-read" class="primary sm">Merkitse luetuiksi</button>' : ''}</div>`);
   $('#allow-push')?.addEventListener('click', async () => { const r = await Notification.requestPermission(); $('#allow-push').textContent = r === 'granted' ? 'Selainilmoitukset sallittu ✓' : 'Ilmoituksia ei sallittu'; $('#allow-push').disabled = true; });
+  $('#open-digest').addEventListener('click', digestModal);
+  $('#mail-prefs')?.addEventListener('change', async e => { const f = new FormData(e.currentTarget); try { await mutate('emailPrefs', { notify: f.has('notify'), digest: f.has('digest') }, 'Sähköpostiasetus tallennettu.'); } catch (err) { message(err.message, true); } });
   $('#mark-read')?.addEventListener('click', async () => { try { await mutate('markRead', { ids: 'all' }); $('#modal').close(); } catch (e) { message(e.message, true); } });
 }
 async function refresh(silent = false) {
@@ -251,6 +264,7 @@ function guide() {
     <li>Vaihda takaisin <b>Sijaisvastaavaksi</b> ja vahvista Elias. Kokeile myös <b>Peru vahvistus</b>: tehtävä avautuu uudelleen.</li>
     <li>Merkitse uusi poissaolo ja lisää jollekulle saatavuus <b>Henkilöt ja saatavuus</b> -välilehdellä.</li>
     <li><b>Ilmoitukset:</b> avaa sivu kahteen välilehteen, toisessa sijaisvastaava ja toisessa Elias. Kun Elias ilmoittautuu, sijaisvastaavan kello soi. Vahvistuksesta tieto menee Eliakselle ja poissa olevalle opettajalle (Anna Aalto).</li>
+    <li>Kokeile <b>Aamukooste</b>: tällaisen yhteenvedon sijaisvastaava saa arkiaamuisin klo 7 sähköpostiin. Sijainen saa muistutuksen omasta päivästään.</li>
     <li>Kokeile <b>Kopioi viesti</b> (WhatsApp-sijaispyyntö) ja <b>Tilanneraportti</b>.</li>
   </ol><p class="form-help" style="margin-top:14px">Kaikki tiedot ovat kuvitteellisia ja pysyvät vain tässä selaimessa. “Palauta esimerkkitilanne” sivun alareunassa aloittaa alusta.</p>
   <div class="form-actions"><button class="primary" data-close>Aloitetaan</button></div>`);
@@ -282,6 +296,7 @@ $('#new-need').addEventListener('click', () => {
     <div class="form-actions"><button type="button" class="ghost" data-close>Peruuta</button><button class="primary" type="submit">Avaa sijaisuus</button></div></form>`,
   data => mutate('addNeed', { ...data, teacherId: data.teacherId || actor.personId }, 'Sijaisuus avattu.'));
 });
+$('#digest-open').addEventListener('click', digestModal);
 $('#report-open').addEventListener('click', async () => { try { const r = await api('/api/report?date=' + encodeURIComponent(date())); textDialog('Päivän tilanneraportti', r.text + '\n\nHaettu ' + new Date(r.generatedAt).toLocaleString('fi-FI')); } catch (e) { message(e.message, true); } });
 $('#history').addEventListener('click', () => {
   const labels = { addPerson: 'Henkilö lisätty', availability: 'Saatavuus lisätty', removeAvailability: 'Saatavuus poistettu', addNeed: 'Sijaisuus avattu', apply: 'Ilmoittautuminen', withdraw: 'Ilmoittautuminen peruttu', confirm: 'Sijainen vahvistettu', cancel: 'Vahvistus peruttu', member: 'Tunnus liitetty', revokeMember: 'Tunnuksen liitos poistettu', resetDemo: 'Esimerkit palautettu' };

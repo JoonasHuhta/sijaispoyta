@@ -117,3 +117,55 @@ test('Oma toiminto ei tee ilmoitusta itselle', () => {
   execute(s, coord, 'addNeed', { teacherId: 'pekka', date: s.needs[0].date, start: '13:00', end: '14:00', group: '5. luokka', subject: 'Musiikki' });
   assert.equal(s.notifications.filter(n => n.to === 'coordinator').length, 0);
 });
+
+import { buildDigest, nextSchoolDay } from '../server/digest.js';
+import { emailsFor, deliverPending, runDigest } from '../server/mail.js';
+const mailEnv = { RESEND_API_KEY: 're_test', MAIL_FROM: 'Sijaispöytä <sijaispoyta@koulu.test>', CRON_TOKEN: 'x'.repeat(32) };
+function fakeFetch() { const sent = []; const f = async (url, init) => { sent.push(JSON.parse(init.body)); return new Response('{}', { status: 200 }); }; f.sent = sent; return f; }
+
+test('Aamukooste kertoo sijaisvastaavalle avoimet ja sijaiselle oman päivän', () => {
+  const s = seed(), d = buildDigest(s, s.needs[0].date);
+  assert.match(d.coordinator.text, /3 sijaisuutta – 1 vahvistettu, 1 odottaa vahvistusta, 1 ilman ilmoittautuneita/);
+  assert.match(d.coordinator.text, /ODOTTAA VAHVISTUSTA – ilmoittautuneet: Sofia Salo/);
+  assert.equal(d.coordinator.needsAction, 2);
+  assert.match(d.people.maija.text, /Sijaisuus tänään: 11:15–12:00/);
+  assert.match(d.people.anna.text, /sijaista ei ole vielä vahvistettu/);
+  assert.equal(buildDigest({ ...s, needs: [] }, s.needs[0].date).coordinator, null);
+  assert.equal(nextSchoolDay('2026-11-13'), '2026-11-16');
+});
+test('Sähköposti vain niille, jotka ovat sen ottaneet käyttöön', () => {
+  const s = initial(), elias = actorFor(s, sub);
+  assert.deepEqual(emailsFor(s, 'elias', 'notify'), []);
+  execute(s, elias, 'emailPrefs', { notify: true, digest: false });
+  assert.deepEqual(emailsFor(s, 'elias', 'notify'), [sub.email]);
+  assert.deepEqual(emailsFor(s, 'elias', 'digest'), []);
+  assert.deepEqual(project(s, elias).emailPrefs, { sub: { notify: true, digest: false } });
+});
+test('Ilmoitussähköposti lähtee kerran, ja ilman asetuksia ei lähde mitään', async () => {
+  const s = initial(); s.emailPrefs = { admin: { notify: true, digest: true } };
+  const db = database(s), store = new BoardStore(db), f = fakeFetch();
+  await store.update(sub, admin.email, command('apply', { id: 'n1' }));
+  assert.deepEqual(await deliverPending(store, {}, 'https://school.test', f), { sent: 0, configured: false });
+  assert.equal((await deliverPending(store, mailEnv, 'https://school.test', f)).sent, 1);
+  assert.equal(f.sent[0].to[0], admin.email); assert.match(f.sent[0].subject, /Uusi ilmoittautuminen/); assert.match(f.sent[0].text, /need=n1/);
+  assert.equal((await deliverPending(store, mailEnv, 'https://school.test', f)).sent, 0);
+});
+test('Aamukooste lähtee kerran päivässä ja tulos ei sisällä henkilötietoja', async () => {
+  const s = initial(); s.emailPrefs = { admin: { notify: false, digest: true }, sub: { notify: false, digest: true } };
+  s.needs[0].applicants = ['elias']; s.needs[0].assignedId = 'elias';
+  const store = new BoardStore(database(s)), f = fakeFetch(), date = s.needs[0].date;
+  const dry = await runDigest(store, mailEnv, { origin: 'https://school.test', date, dry: true, fetcher: f });
+  assert.deepEqual(dry, { dry: true, date, wouldSend: 2 }); assert.equal(f.sent.length, 0);
+  const first = await runDigest(store, mailEnv, { origin: 'https://school.test', date, fetcher: f });
+  assert.equal(first.sent, 2); assert.doesNotMatch(JSON.stringify(first), /@|Elias|Anna/);
+  assert.equal((await runDigest(store, mailEnv, { origin: 'https://school.test', date, fetcher: f })).alreadySent, true);
+  assert.equal(f.sent.length, 2);
+});
+test('Ajastusrajapinta vaatii oikean tokenin', async () => {
+  const db = database(initial());
+  const call = token => handleApi(new Request('https://school.test/api/cron/digest?dry=1', { method: 'POST', headers: token ? { authorization: 'Bearer ' + token } : {} }), { DB: db, ...mailEnv });
+  assert.equal((await call()).status, 401);
+  assert.equal((await call('y'.repeat(32))).status, 401);
+  const ok = await call(mailEnv.CRON_TOKEN); assert.equal(ok.status, 200);
+  assert.equal((await handleApi(new Request('https://school.test/api/cron/digest', { method: 'POST', headers: { authorization: 'Bearer ' + mailEnv.CRON_TOKEN } }), { DB: db })).status, 503);
+});
