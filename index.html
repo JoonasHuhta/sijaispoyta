@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fi" data-mode="demo">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#2b4596">
+  <title>Sijaispöytä — steinerkoulun sijaisjärjestelyt</title>
+  <link rel="icon" type="image/png" href="./img/favicon.png">
+  <link rel="apple-touch-icon" href="./img/apple-touch-icon.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="rainbow" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+  <header class="masthead">
+    <div class="brand">
+      <img src="./img/logo.png" alt="" width="52" height="52">
+      <div><strong>Sijaispöytä</strong><small>Steinerkoulun sijaisjärjestelyt</small></div>
+    </div>
+    <div class="account">
+      <button id="bell" class="bell" aria-label="Ilmoitukset" hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg><span id="bell-count" hidden></span></button>
+      <label id="demo-role-wrap" class="role-switch" hidden><span>Testaa roolina</span><select id="demo-role"></select></label>
+      <span id="identity" class="identity" hidden></span>
+      <a id="signout" class="signout" href="/signout-with-chatgpt?return_to=%2F" target="_top">Kirjaudu ulos</a>
+    </div>
+  </header>
+
+  <div id="live-notice" class="notice">Yhteiskäytön kokeiluversio. Käytä vielä kuvitteellisia tietoja. Muutokset tallentuvat yhteiseen tietokantaan.</div>
+  <div id="demo-notice" class="notice demo" hidden>
+    <strong>Testiversio.</strong> Tiedot ovat kuvitteellisia ja tallentuvat vain tähän selaimeen. Vaihda roolia oikeasta yläkulmasta ja kokeile, miltä sovellus näyttää sijaisvastaavalle ja sijaiselle.
+    <button id="demo-guide" class="link">Näytä testiohje</button>
+  </div>
+
+  <main>
+    <section id="connection" class="empty">
+      <h2>Avataan yhteistä tilannetta</h2>
+      <p>Tarvitset kirjautumisen ja sijaisvastaavan liittämän tunnuksen.</p>
+      <a class="button primary" href="/signin-with-chatgpt?return_to=%2F" target="_top">Kirjaudu ChatGPT:llä</a>
+    </section>
+
+    <div id="workspace" hidden>
+      <nav class="tabs" aria-label="Näkymät">
+        <button data-tab="board" data-admin><span class="tab-dot c-blue"></span>Sijaisvastaavan pöytä</button>
+        <button data-tab="self"><span class="tab-dot c-green"></span><span id="self-tab-label">Sijaisen näkymä</span></button>
+        <button data-tab="people"><span class="tab-dot c-yellow"></span>Henkilöt ja saatavuus</button>
+      </nav>
+
+      <section class="pagehead">
+        <div>
+          <h1 id="page-title">Päivän sijaisuudet</h1>
+          <p id="page-lead" class="muted"></p>
+        </div>
+        <button id="new-need" class="primary big" hidden>+ Merkitse poissaolo</button>
+      </section>
+
+      <section class="daybar" aria-label="Päivän valinta">
+        <button id="prev-day" class="round" aria-label="Edellinen päivä">‹</button>
+        <label class="day">
+          <strong id="day-name"></strong>
+          <input id="date" type="date" required aria-label="Valitse päivä">
+        </label>
+        <button id="next-day" class="round" aria-label="Seuraava päivä">›</button>
+        <button id="today" class="ghost">Tänään</button>
+        <span id="sync" class="sync" role="status">Yhdistetään…</span>
+      </section>
+
+      <section id="board-view">
+        <div id="stats" class="filters" aria-label="Suodata tilanteen mukaan"></div>
+        <div id="needs" class="needs"></div>
+        <div class="tools" data-admin>
+          <button id="digest-open" class="ghost">Aamukooste</button>
+          <button id="report-open" class="ghost">Tilanneraportti</button>
+          <button id="history" class="ghost">Muutoshistoria</button>
+          <button id="export" class="ghost">Vie tiedot (JSON)</button>
+          <button id="setup-open" class="ghost">Käyttöönotto</button>
+        </div>
+      </section>
+
+      <section id="self-view" hidden>
+        <div class="self-panel">
+          <label id="self-person-label" class="self-person">Kokeile henkilön puolesta<select id="self-person"></select></label>
+          <div class="self-availability">
+            <span class="label">Saatavuutesi tänä päivänä</span>
+            <div id="self-slots" class="chips"></div>
+          </div>
+          <button id="self-availability" class="primary">+ Ilmoita saatavuus</button>
+        </div>
+        <div id="self-needs"></div>
+      </section>
+
+      <section id="people-view" hidden>
+        <div class="people-head">
+          <p class="muted">Saatavuus merkitään päivälle ja kellonajalle. Puuttuva saatavuus tarkoittaa “ei ilmoitettu”.</p>
+          <button id="new-person" class="primary" data-admin>+ Lisää henkilö</button>
+        </div>
+        <div id="people"></div>
+      </section>
+
+      <footer>
+        <span id="footer-text">Sijaispöytä · Näkymä päivittyy 10 sekunnin välein</span>
+        <span class="footer-actions">
+          <button id="refresh" class="link">Päivitä tilanne</button>
+          <button id="reset" class="link" data-admin>Palauta esimerkkitilanne</button>
+        </span>
+      </footer>
+    </div>
+  </main>
+
+  <div id="message" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="modal">
+    <div class="dialog-top"><h2 id="modal-title"></h2><button id="close-modal" class="round" aria-label="Sulje">×</button></div>
+    <div id="modal-content"></div>
+    <p id="modal-error" role="alert" hidden></p>
+  </dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
