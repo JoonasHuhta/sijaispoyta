@@ -8,7 +8,7 @@ const params = new URLSearchParams(location.search);
 const DEMO = location.hostname.endsWith('github.io') || params.has('demo') || document.documentElement.dataset.mode === 'demo' || location.protocol === 'file:';
 let demo = null;
 
-let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, mailOn = false, pushKey = null, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
+let state = { people: [], availability: [], needs: [], events: [], members: [], notifications: [] }, actor, seen = null, mailOn = false, pushKey = null, setup = null, revision = -1, tab = 'board', filter = 'all', busy = false, toastTimer;
 
 const admin = () => actor?.role === 'coordinator';
 const date = () => $('#date').value;
@@ -46,7 +46,7 @@ async function api(path, init) {
 }
 function accept(data) {
   if (data.revision < revision) return;
-  state = data.state; actor = data.actor; revision = data.revision; mailOn = Boolean(data.mail); pushKey = data.push || null;
+  state = data.state; actor = data.actor; revision = data.revision; mailOn = Boolean(data.mail); pushKey = data.push || null; setup = data.setup || null;
   if (!admin() && tab === 'board') tab = 'self';
   const sync = $('#sync'); sync.classList.remove('offline');
   sync.textContent = DEMO ? 'Tallennettu tähän selaimeen' : 'Yhteinen tilanne · päivitetty ' + new Date(data.serverTime).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
@@ -355,6 +355,17 @@ $('#new-need').addEventListener('click', () => {
   data => mutate('addNeed', { ...data, teacherId: data.teacherId || actor.personId }, 'Sijaisuus avattu.'));
 });
 $('#digest-open').addEventListener('click', digestModal);
+$('#setup-open').addEventListener('click', () => {
+  const row = (ok, title, help) => `<div class="list-row"><span><strong>${ok ? '✓' : '○'} ${title}</strong><br><span class="muted">${help}</span></span><small class="${ok ? 'ok-line' : ''}">${ok ? 'Käytössä' : 'Ei käytössä'}</small></div>`;
+  const s = setup || {};
+  modal('Ilmoitusten käyttöönotto', DEMO ? '<p class="muted">Testiversiossa ilmoitukset kulkevat vain tämän selaimen sisällä. Oikean version käyttöönotto on kuvattu README:ssä.</p>' :
+    row(true, 'Ilmoitukset sovelluksessa', 'Kello ja ilmoitukset avoimella sivulla.') +
+    row(s.push, 'Puhelinilmoitukset', 'Sites-salaisuudet VAPID_PUBLIC_KEY ja VAPID_PRIVATE_KEY (npm run push:keys).') +
+    row(s.mail, 'Sähköposti', 'Sites-salaisuudet RESEND_API_KEY ja MAIL_FROM.') +
+    row(s.cron, 'Aamukoosteen ajastus', 'CRON_TOKEN Sitesissa ja GitHubissa. Ilman ajastusta kooste lähtee, kun joku käyttää sovellusta klo 7–10.') +
+    row(s.siteUrl, 'Linkit viesteissä', 'SITE_URL: sovelluksen osoite.') +
+    `<p class="form-help" style="margin-top:12px">${s.lastDigest ? 'Viimeisin aamukooste: ' + esc(s.lastDigest) : 'Aamukoostetta ei ole vielä lähetetty.'} Muutosten jälkeen julkaise Sites-versio uudelleen.</p>`);
+});
 $('#report-open').addEventListener('click', async () => { try { const r = await api('/api/report?date=' + encodeURIComponent(date())); textDialog('Päivän tilanneraportti', r.text + '\n\nHaettu ' + new Date(r.generatedAt).toLocaleString('fi-FI')); } catch (e) { message(e.message, true); } });
 $('#history').addEventListener('click', () => {
   const labels = { addPerson: 'Henkilö lisätty', availability: 'Saatavuus lisätty', removeAvailability: 'Saatavuus poistettu', addNeed: 'Sijaisuus avattu', apply: 'Ilmoittautuminen', withdraw: 'Ilmoittautuminen peruttu', confirm: 'Sijainen vahvistettu', cancel: 'Vahvistus peruttu', member: 'Tunnus liitetty', revokeMember: 'Tunnuksen liitos poistettu', resetDemo: 'Esimerkit palautettu' };

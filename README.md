@@ -91,6 +91,10 @@ Hiljaisena aamuna viestiä ei lähetetä. Kooste lähtee kerran päivässä. Git
 4. Lisää GitHubiin (Settings → Secrets and variables → Actions) `SIJAISPOYTA_URL` ja `SIJAISPOYTA_CRON_TOKEN` (sama kuin `CRON_TOKEN`).
 5. Testaa: Actions → Aamukooste → Run workflow (esikatselu ei lähetä mitään).
 
+Sijaisvastaava näkee sovelluksen **Käyttöönotto**-painikkeesta, mitkä kanavat ovat käytössä.
+
+Varajärjestely: jos ajastus ei tavoita sovellusta, aamukooste lähtee, kun joku käyttää sovellusta arkiaamuna klo 7–10. Kooste lähtee silti vain kerran päivässä.
+
 Ajastettu pyyntö tulee ilman ChatGPT-kirjautumista ja tunnistetaan `CRON_TOKEN`illa. Jos Sites ohjaa kaikki kirjautumattomat pyynnöt kirjautumiseen, ajastus ei tavoita sovellusta. Silloin aamukooste ajetaan Cloudflaren omalla ajastuksella tai muulla palvelimella (ks. PLAN.md).
 
 ## Ulkoasu

@@ -214,3 +214,10 @@ test('Aamukooste lähtee myös puhelimeen', async () => {
   const r = await runDigest(store, env, { origin: 'https://school.test', date, fetcher: f });
   assert.deepEqual({ sent: r.sent, pushed: r.pushed }, { sent: 0, pushed: 1 });
 });
+test('Sijaisvastaava näkee käyttöönoton tilan, sijainen ei', async () => {
+  const db = database(initial()), env = { DB: db, VAPID_PUBLIC_KEY: 'k', VAPID_PRIVATE_KEY: 'p', CRON_TOKEN: 'x'.repeat(30) };
+  const a = await (await handleApi(request('/api/state'), env)).json();
+  assert.deepEqual({ ...a.setup, lastDigest: null }, { mail: false, push: true, cron: true, siteUrl: false, lastDigest: null });
+  const e = await (await handleApi(request('/api/state', sub), env)).json();
+  assert.equal(e.setup, undefined);
+});

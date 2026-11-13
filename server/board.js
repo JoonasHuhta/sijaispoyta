@@ -202,6 +202,20 @@ export class BoardStore {
 
 const json = (body, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const sameToken = (a, b) => { if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false; let x = 0; for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i); return x === 0; };
+/** Arkipäivä ja kello Helsingissä. */
+export function helsinkiClock(now = new Date()) {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Helsinki', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  const day = new Date(today() + 'T12:00:00Z').getUTCDay();
+  return { hour, weekday: day !== 0 && day !== 6 };
+}
+/** Varajärjestely: jos ajastus ei ole tavoittanut sovellusta, aamukooste lähtee ensimmäisestä käytöstä klo 7–10. */
+async function digestIfDue(store, env, state, origin) {
+  const { hour, weekday } = helsinkiClock();
+  if (!weekday || hour < 7 || hour >= 10 || state.digestSent?.[today()]) return;
+  if (!mailConfigured(env) && !pushConfigured(env)) return;
+  try { await runDigest(store, env, { origin }); } catch (error) { console.error('Aamukooste:', error.message); }
+}
+
 async function handleCron(request, env) {
   // Ajastettu aamukooste (GitHub Actions tai muu ajastin). Ei ChatGPT-kirjautumista, vaan oma salainen token.
   if (request.method !== 'POST') fail(405, 'Käytä POST-pyyntöä.');
@@ -211,9 +225,8 @@ async function handleCron(request, env) {
   if (!env.DB) fail(503, 'Yhteistä tietokantaa ei ole vielä kytketty.');
   const url = new URL(request.url);
   const minHour = Number(url.searchParams.get('minHour') || 0);
-  const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Helsinki', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
-  const day = new Date(today() + 'T12:00:00Z').getUTCDay();
-  if (day === 0 || day === 6) return json({ skipped: 'viikonloppu' });
+  const { hour, weekday } = helsinkiClock();
+  if (!weekday) return json({ skipped: 'viikonloppu' });
   if (hour < minHour) return json({ skipped: 'liian aikaista', hour });
   const origin = env.SITE_URL || url.origin;
   return json(await runDigest(new BoardStore(env.DB), env, { origin, dry: url.searchParams.get('dry') === '1' }));
@@ -231,6 +244,7 @@ export async function handleApi(request, env) {
     if (request.method === 'GET' && ['/api/state', '/api/report', '/api/digest'].includes(url.pathname)) {
       result = await store.read();
       result.actor = actorFor(result.state, identity, env.ADMIN_EMAIL);
+      if (url.pathname === '/api/state') await digestIfDue(store, env, result.state, env.SITE_URL || url.origin);
       if (url.pathname === '/api/digest') {
         const date = url.searchParams.get('date') || today();
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Tarkista päivä.');
@@ -262,7 +276,8 @@ export async function handleApi(request, env) {
     delete visible.digestSent;
     // Push-tilauksista näytetään vain omat, ilman salausavaimia.
     visible.pushSubs = (result.state.pushSubs || []).filter(x => x.memberId === result.actor.id).map(({ id, endpoint, label, at }) => ({ id, endpoint, label, at }));
-    return json({ revision: result.revision, state: visible, actor: result.actor, mail: mailConfigured(env), push: pushConfigured(env) ? env.VAPID_PUBLIC_KEY : null, serverTime: new Date().toISOString() });
+    const setup = result.actor.role === 'coordinator' ? { mail: mailConfigured(env), push: pushConfigured(env), cron: Boolean(env.CRON_TOKEN && env.CRON_TOKEN.length >= 24), siteUrl: Boolean(env.SITE_URL), lastDigest: Object.keys(result.state.digestSent || {}).sort().at(-1) || null } : undefined;
+    return json({ revision: result.revision, state: visible, actor: result.actor, mail: mailConfigured(env), push: pushConfigured(env) ? env.VAPID_PUBLIC_KEY : null, setup, serverTime: new Date().toISOString() });
   } catch (error) {
     if (error instanceof HttpError) return json({ error: error.message }, error.status);
     // Domain validation errors are safe, user-facing messages. Database failures are not.
